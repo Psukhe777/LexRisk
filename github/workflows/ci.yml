@@ -1,0 +1,30 @@
+name: CLAUSE CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests (no API key needed)
+        run: pytest tests/ -v -m "not integration" --cov=src --cov-report=term-missing
+
+      - name: Run integration tests
+        if: ${{ secrets.GROQ_API_KEY != '' }}
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: pytest tests/ -v -m integration

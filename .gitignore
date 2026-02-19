@@ -1,0 +1,53 @@
+# ── Secrets / Environment ────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.key
+secrets.toml
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-log.txt
+
+# ── Virtual Environments ─────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ── Testing / Coverage ───────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.coveragerc
+
+# ── Streamlit ────────────────────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Uploads / User Data ──────────────────────────────────────────────────────
+uploads/
+*.pdf
+!assets/*.pdf          # allow sample PDFs in assets
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
