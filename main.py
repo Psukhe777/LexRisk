@@ -1,5 +1,5 @@
 """
-main.py — CLAUSE: AI-powered predatory clause scanner
+main.py — Lexrisk: AI-powered predatory scanner
 Run: streamlit run main.py
 """
 
@@ -7,14 +7,9 @@ import logging
 import os
 import sys
 
-import  streamlit as st
+import streamlit as st
 from dotenv import load_dotenv
-api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
 
-if not api_key:
-    st.error("Missing GROQ_API_KEY. Please add it to Streamlit Secrets or your .env file.")
-    st.stop()
-    
 sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import ClauseAnalyzer
 
@@ -24,7 +19,7 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 # ── Page Config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="CLAUSE ⚖️",
+    page_title="Lexrisk ⚖️",
     page_icon="⚖️",
     layout="centered",
     initial_sidebar_state="collapsed",
@@ -44,8 +39,8 @@ st.markdown("""
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
-st.title("⚖️ CLAUSE")
-st.caption("AI Safety Gauge for Predatory Legal Contracts — *Building in public, Day 1*")
+st.title("⚖️ Lexrisk")
+st.caption("AI Safety Gauge for Predatory Legal Contracts — *Building in public, Day 5*")
 st.divider()
 
 # ── Input ─────────────────────────────────────────────────────────────────────
@@ -66,7 +61,7 @@ if analyze_btn and contract_text.strip():
     try:
         analyzer = ClauseAnalyzer()
 
-        with st.spinner("CLAUSE is scanning for predatory language..."):
+        with st.spinner("Lexrisk is scanning for predatory language..."):
             result = analyzer.analyze(contract_text)
 
         # Risk Score
@@ -107,3 +102,4 @@ if analyze_btn and contract_text.strip():
 
 elif analyze_btn:
     st.warning("Please paste some contract text first.")
+
