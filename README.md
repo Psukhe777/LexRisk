@@ -1,4 +1,6 @@
-# 🏛️ RiskLex: AI-Powered Contract Intelligence *Still in development* 🚧
+# 🏛️ RiskLex: AI-Powered Contract Intelligence 
+
+Sill In Development 🚧 Launch 02/23/26
 
 > **"Nobody reads the Terms of Service. Until now."**
 
