@@ -1,4 +1,4 @@
-# 🏛️ RiskLex: AI-Powered Contract Intelligence 
+# 🏛️ Lexrisk AI-Powered Contract Intelligence 
 
 Sill In Development 🚧 Launch 02/23/26
 
