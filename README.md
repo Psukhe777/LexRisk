@@ -1,4 +1,4 @@
-# 🏛️ RiskLex: AI-Powered Contract Intelligence
+# 🏛️ RiskLex: AI-Powered Contract Intelligence *Still in development* 🚧
 
 > **"Nobody reads the Terms of Service. Until now."**
 
