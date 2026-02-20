@@ -7,9 +7,14 @@ import logging
 import os
 import sys
 
-import streamlit as st
+import  streamlit as st
 from dotenv import load_dotenv
+api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
 
+if not api_key:
+    st.error("Missing GROQ_API_KEY. Please add it to Streamlit Secrets or your .env file.")
+    st.stop()
+    
 sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import ClauseAnalyzer
 
