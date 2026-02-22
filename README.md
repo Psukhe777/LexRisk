@@ -30,11 +30,6 @@ RiskLex is built on a modern, high-speed Python architecture optimized for immed
 * **Risk Heatmap:** Generates an overall "Risk Score" out of 100 for any pasted text or uploaded document.
 * **Plain English Translation:** Strips away the legalese and explains exactly how a flagged clause impacts the user.
 
-
-
-
-
-
 MIT License
 
 Copyright (c) 2026 Nehemiah 
