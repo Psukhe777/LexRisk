@@ -32,9 +32,7 @@ RiskLex is built on a modern, high-speed Python architecture optimized for immed
 
 
 
-## 💻 Local Setup & Installation
 
-If you want to run the RiskLex engine locall
 
 
 MIT License
