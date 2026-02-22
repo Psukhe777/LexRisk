@@ -210,6 +210,6 @@ st.markdown("""
 <div style='text-align: center; color: #666; font-size: 0.75rem; padding: 2rem 0;'>
     <p><strong>CLAUSE</strong> by Babylon Technologies</p>
     <p>© 2026 Babylon Technologies. Building in public.</p>
-    <p><a href="https://babylontech.org" style="color: #c9a84c;">Back to Babylon Studio</a></p>
+    <p><a href="https://bablyontech.org" style="color: #c9a84c;">Back to Babylon Studio</a></p>
 </div>
 """, unsafe_allow_html=True)
