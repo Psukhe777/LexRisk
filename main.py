@@ -10,11 +10,6 @@ import PyPDF2
 import streamlit as st
 from dotenv import load_dotenv
 
-# Fix pathing for local imports before Streamlit config
-sys.path.insert(0, os.path.dirname(__file__))
-from analyzer import ClauseAnalyzer
-from demo_data import DEMOS  
-
 # ── 1. Page Config (MUST BE FIRST STREAMLIT COMMAND) ──────────────────────────
 st.set_page_config(
     page_title="LexRisk ⚖️",
@@ -23,22 +18,22 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-load_dotenv()
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+# ── 2. Local Imports & Config ─────────────────────────────────────────────────
+# Add current directory to path so analyzer and demo_data can be found
 sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import ClauseAnalyzer
+from demo_data import DEMOS  
 
-# ── Page Config ───────────────────────────────────────────────────────────────
+load_dotenv()
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
-st.set_page_config(
-    page_title="LexRisk ⚖️",
-    page_icon="⚖️",
-    layout="centered",
-    initial_sidebar_state="collapsed",
-)
+# ── 3. Session State Initialization ───────────────────────────────────────────
+if 'contract_text' not in st.session_state:
+    st.session_state.contract_text = ""
+if 'demo_active' not in st.session_state:
+    st.session_state.demo_active = False
 
-# ── Styles ────────────────────────────────────────────────────────────────────
-
+# ── 4. Styles ─────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
     .risk-critical { color: #ff4444; font-weight: bold; font-size: 1.5rem; }
@@ -49,8 +44,24 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── Header ────────────────────────────────────────────────────────────────────
+# ── 5. Sidebar Demos (Zero Latency) ───────────────────────────────────────────
+st.sidebar.markdown("### ⚡ Instant Demos")
+st.sidebar.caption("Pre-computed to bypass API limits during launch.")
 
+def load_frozen_demo(demo_key):
+    st.session_state.contract_text = DEMOS[demo_key]['text']
+    st.session_state.demo_active = True
+
+if st.sidebar.button("📱 Analyze TikTok ToS", use_container_width=True):
+    load_frozen_demo('tiktok')
+if st.sidebar.button("🐦 Analyze X ToS", use_container_width=True):
+    load_frozen_demo('x_tos')
+if st.sidebar.button("🏋️ Analyze Gym Contract", use_container_width=True):
+    load_frozen_demo('gym')
+if st.sidebar.button("💼 Analyze Startup NDA", use_container_width=True):
+    load_frozen_demo('nda')
+
+# ── 6. Main Header ────────────────────────────────────────────────────────────
 st.title("⚖️ Lexrisk")
 st.caption("AI Safety Gauge for Predatory Legal Contracts — *Building in public, Day 5*")
 st.warning("""
@@ -61,41 +72,40 @@ Babylon Technologies provides this service "as is" without warranties.
 """)
 st.divider()
 
-# ── Demos ─────────────────────────────────────────────────────────────────────
+# ── 7. PDF Uploader (World-Class Feature) ─────────────────────────────────────
+st.markdown("### 📄 Upload a Contract (PDF)")
+uploaded_file = st.file_uploader("Drag and drop a PDF file here to scan", type="pdf")
 
-st.markdown("**Try a sample contract:**")
-cols = st.columns(4)
+if uploaded_file is not None:
+    try:
+        pdf_reader = PyPDF2.PdfReader(uploaded_file)
+        extracted_text = ""
+        for page in pdf_reader.pages:
+            extracted_text += page.extract_text() + "\n"
+        
+        # Inject the PDF text directly into the scanner's session state
+        st.session_state.contract_text = extracted_text
+        st.session_state.demo_active = False # Disable demo bypass for new uploads
+        st.success("✅ PDF Extracted Successfully! Scroll down to review and analyze.")
+    except Exception as e:
+        st.error(f"Error reading PDF: {e}")
 
-if "contract_input" not in st.session_state:
-    st.session_state.contract_input = ""
+st.markdown("---")
 
-def load_demo(text):
-    st.session_state.contract_input = text
-
-with cols[0]:
-    if st.button("📱 TikTok", use_container_width=True):
-        load_demo("User grants TikTok an unconditional, irrevocable, non-exclusive, royalty-free, fully transferable, perpetual worldwide license to use, modify, adapt, reproduce, make derivative works of, publish and/or transmit, and/or distribute...")
-with cols[1]:
-    if st.button("🐦 Twitter/X", use_container_width=True):
-        load_demo("By submitting, posting or displaying Content on or through the Services, you grant us a worldwide, non-exclusive, royalty-free license (with the right to sublicense) to use, copy, reproduce, process, adapt, modify, publish, transmit, display and distribute such Content in any and all media or distribution methods now known or later developed...")
-with cols[2]:
-    if st.button("💼 NDA", use_container_width=True):
-        load_demo("The Employee agrees that all intellectual property conceived or developed during the term of employment, whether during working hours or not, including weekends, belongs solely to the Company. The Employee also agrees to a non-compete clause preventing employment in the tech sector for a period of 5 years following termination...")
-with cols[3]:
-    if st.button("🏋️ Gym", use_container_width=True):
-        load_demo("Member agrees to defend, indemnify and hold harmless the Gym against any and all claims, including those arising from the Gym's own negligence or gross negligence. Member accepts full financial responsibility for any injuries occurring on the premises, even if caused by faulty equipment.")
-
-# ── Main Input ────────────────────────────────────────────────────────────────
-
+# ── 8. Main Input Area ────────────────────────────────────────────────────────
 contract_text = st.text_area(
     "Paste your contract or Terms of Service here",
-    value=st.session_state.contract_input,
+    value=st.session_state.contract_text,
     height=300,
     placeholder="Paste any TOS, contract, or legal agreement...",
 )
 
-# ── Clickwrap Agreement ───────────────────────────────────────────────────────
+# Sync the text area back to session state if the user types manually
+if contract_text != st.session_state.contract_text:
+    st.session_state.contract_text = contract_text
+    st.session_state.demo_active = False  # They edited it, so it's no longer a pure demo
 
+# ── 9. Clickwrap & Analysis Trigger ───────────────────────────────────────────
 st.markdown("---")
 agreed = st.checkbox(
     "I understand Lexrisk is an AI tool and not a substitute for professional legal advice. "
@@ -114,22 +124,49 @@ with col1:
 if not agreed:
     st.info("💡 Please check the box above to enable the analysis.")
 
-# ── Analysis ──────────────────────────────────────────────────────────────────
-
-if analyze_btn and contract_text.strip():
-    # Get API key safely
-    api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
-    if not api_key:
-        st.error("Missing GROQ_API_KEY. Please add it to Streamlit Secrets or your .env file.")
-        st.stop()
-        
+# ── 10. Core Analysis Logic ───────────────────────────────────────────────────
+if analyze_btn and st.session_state.contract_text.strip():
     try:
-        analyzer = ClauseAnalyzer(api_key=api_key)
+        # Check if we are running a frozen demo or a live API call
+        if st.session_state.demo_active:
+            # Bypass Groq entirely, use the frozen data based on matching text
+            demo_match = next((d['analysis'] for d in DEMOS.values() if d['text'] == st.session_state.contract_text), None)
+            if demo_match:
+                result_data = demo_match
+                # Reconstruct an object-like structure to match your analyzer output
+                class DummyResult: pass
+                result = DummyResult()
+                result.risk_score = result_data['risk_score']
+                result.risk_level = result_data['risk_level']
+                result.summary = result_data['summary']
+                result.recommendation = result_data['recommendation']
+                result.disclaimer = "Lexrisk is an AI-powered assistant, not a legal professional. This analysis is for informational purposes only and does not constitute legal advice or an attorney-client relationship."
+                
+                class DummyClause:
+                    def __init__(self, c):
+                        self.category = c['category']
+                        self.severity = c['severity']
+                        self.clause_text = c['clause_text']
+                        self.plain_english = c['plain_english']
+                        self.red_flag = c['red_flag']
+                
+                result.flagged_clauses = [DummyClause(c) for c in result_data['flagged_clauses']]
+                st.success("⚡ Instant Demo Loaded (API Bypassed)")
+            else:
+                st.session_state.demo_active = False # Fallback if text was modified
+        
+        if not st.session_state.demo_active:
+            # Live Groq API Call
+            api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+            if not api_key:
+                st.error("Missing GROQ_API_KEY. Please add it to Streamlit Secrets or your .env file.")
+                st.stop()
+                
+            analyzer = ClauseAnalyzer(api_key=api_key)
+            with st.spinner("Lexrisk is scanning for predatory language..."):
+                result = analyzer.analyze(st.session_state.contract_text)
 
-        with st.spinner("Lexrisk is scanning for predatory language..."):
-            result = analyzer.analyze(contract_text)
-
-        # Risk Score
+        # ── Display Results ──
         st.divider()
         risk_class = f"risk-{result.risk_level.lower()}"
         st.markdown(f"### Overall Risk Score")
@@ -159,16 +196,12 @@ if analyze_btn and contract_text.strip():
         else:
             st.success("✅ No predatory clauses detected.")
 
-        # Display the injected legal disclaimer
         st.warning(f"⚖️ **Legal Notice:** {result.disclaimer}")
 
-    except ValueError as e:
-        st.error(f"Configuration error: {e}")
     except Exception as e:
         st.error(f"Analysis failed: {e}")
-        st.caption("Make sure your GROQ_API_KEY is set in .env")
 
-# ── Trust & Privacy / Footer ─────────────────────────────────────────────────
+# ── 11. Footer ────────────────────────────────────────────────────────────────
 st.divider()
 st.caption("🔒 **Privacy:** Data is analyzed in memory and immediately discarded. No storage.")
 st.caption("⚖️ **Legal:** Lexrisk is an AI tool, not a law firm. No legal advice provided.")
@@ -176,7 +209,7 @@ st.caption("⚖️ **Legal:** Lexrisk is an AI tool, not a law firm. No legal ad
 st.markdown("""
 <div style='text-align: center; color: #666; font-size: 0.75rem; padding: 2rem 0;'>
     <p><strong>CLAUSE</strong> by Babylon Technologies</p>
-    <p>© 2026 Bablyon Technologies. Building in public.</p>
-    <p><a href="https://bablyontech.org/" style="color: #c9a84c;">Back to Babylon Studio</a></p>
+    <p>© 2026 Babylon Technologies. Building in public.</p>
+    <p><a href="https://babylontech.org" style="color: #c9a84c;">Back to Babylon Studio</a></p>
 </div>
 """, unsafe_allow_html=True)
