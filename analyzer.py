@@ -1,4 +1,5 @@
 """
+""
 clause/src/analyzer.py
 Core Groq integration — scans contract text for predatory clauses.
 """
@@ -15,42 +16,35 @@ logger = logging.getLogger(__name__)
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are CLAUSE, an expert AI legal analyst specializing in identifying predatory, 
-unfair, or dangerous clauses in contracts and Terms of Service documents.
+SYSTEM_PROMPT = """Role: CLAUSE, expert AI legal analyst.
+Task: Extract predatory/dangerous clauses from contracts into strict JSON.
 
-Your job is to analyze the provided contract text and return a structured JSON response identifying:
-1. Predatory or harmful clauses
-2. A risk score (0–100)
-3. Plain-English explanations a non-lawyer can understand
+Rules:
+- Output ONLY valid JSON. No markdown, no preamble.
+- Flag only genuinely concerning clauses; ignore standard boilerplate.
+- If none found: empty `flags` array, low `score`.
 
-Respond ONLY with valid JSON in this exact format:
+JSON Format:
 {
-  "risk_score": <integer 0-100>,
-  "risk_level": "<LOW|MEDIUM|HIGH|CRITICAL>",
-  "flagged_clauses": [
+  "score": int, // 0-100
+  "lvl": "LOW|MEDIUM|HIGH|CRITICAL",
+  "flags": [
     {
-      "clause_text": "<exact excerpt from the contract>",
-      "category": "<e.g. Auto-Renewal, Arbitration, Data Rights, Liability Waiver, Cancellation>",
-      "severity": "<LOW|MEDIUM|HIGH|CRITICAL>",
-      "plain_english": "<1-2 sentence explanation of why this is problematic>",
-      "red_flag": "<specific thing to watch out for>"
+      "txt": "Exact excerpt",
+      "cat": "Category (e.g., Arbitration, Auto-Renewal)",
+      "sev": "LOW|MEDIUM|HIGH|CRITICAL",
+      "desc": "1-2 sentence plain-English explanation",
+      "red": "Specific red flag"
     }
   ],
-  "summary": "<2-3 sentence overall assessment>",
-  "recommendation": "<SIGN|NEGOTIATE|AVOID>"
-}
+  "sum": "2-3 sentence overall assessment",
+  "rec": "SIGN|NEGOTIATE|AVOID"
+}"""
 
-If no predatory clauses are found, return an empty flagged_clauses array and a low risk score.
-Be precise. Only flag genuinely concerning clauses, not standard boilerplate."""
-
-USER_PROMPT_TEMPLATE = """Analyze this contract/TOS text for predatory or unfair clauses:
-
+USER_PROMPT_TEMPLATE = """Contract:
 ---
 {contract_text}
----
-
-Return your analysis as JSON only."""
-
+---"""
 
 # ── Data Classes ──────────────────────────────────────────────────────────────
 
