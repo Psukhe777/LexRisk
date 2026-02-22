@@ -1,11 +1,12 @@
 """
-""
-clause/src/analyzer.py
+analyzer.py
 Core Groq integration — scans contract text for predatory clauses.
 """
 
 import logging
 import os
+import json
+import re
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -26,7 +27,7 @@ Rules:
 
 JSON Format:
 {
-  "score": int, // 0-100
+  "score": 0,
   "lvl": "LOW|MEDIUM|HIGH|CRITICAL",
   "flags": [
     {
@@ -64,17 +65,62 @@ class AnalysisResult:
     summary: str
     recommendation: str
     raw_response: str
-    disclaimer: str  # <--- NEW FIELD
+    disclaimer: str
 
 # ── Analyzer ──────────────────────────────────────────────────────────────────
 
 class ClauseAnalyzer:
-    # ... (keep your __init__ and analyze methods) ...
+    def __init__(self, api_key: str | None = None):
+        # Try multiple sources for API key
+        if api_key:
+            self.api_key = api_key
+        else:
+            try:
+                import streamlit as st
+                self.api_key = st.secrets.get("GROQ_API_KEY")
+            except:
+                self.api_key = os.getenv("GROQ_API_KEY")
+        
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY not set. Add it to Streamlit secrets or .env file.")
+        
+        self.client = Groq(api_key=self.api_key)
+        self.model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        self.max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "2048"))
+        self.temperature = float(os.getenv("GROQ_TEMPERATURE", "0.2"))
+
+        logger.info(f"ClauseAnalyzer initialized with model: {self.model}")
+
+    def analyze(self, contract_text: str) -> AnalysisResult:
+        """Analyze contract text for predatory clauses."""
+        if not contract_text or not contract_text.strip():
+            raise ValueError("Contract text cannot be empty.")
+
+        logger.info(f"Analyzing contract ({len(contract_text)} chars)...")
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": USER_PROMPT_TEMPLATE.format(
+                        contract_text=contract_text[:8000]
+                    )}
+                ],
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+            )
+
+            raw = response.choices[0].message.content
+            logger.info("Groq inference successful.")
+            return self._parse_response(raw)
+
+        except Exception as e:
+            logger.error(f"Groq API error: {e}")
+            raise
 
     def _parse_response(self, raw: str) -> AnalysisResult:
-        import json
-        import re
-        
+        """Parse Groq JSON response into AnalysisResult."""
         # Strip markdown fences
         clean = re.sub(r"```(?:json)?|```", "", raw).strip()
         data = json.loads(clean)
@@ -104,5 +150,5 @@ class ClauseAnalyzer:
             summary=data.get("sum", ""),
             recommendation=data.get("rec", "SIGN"),
             raw_response=raw,
-            disclaimer=legal_notice # <--- INJECTED HERE
+            disclaimer=legal_notice
         )
