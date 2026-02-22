@@ -56,7 +56,6 @@ class FlaggedClause:
     plain_english: str
     red_flag: str
 
-
 @dataclass
 class AnalysisResult:
     risk_score: int
@@ -65,84 +64,45 @@ class AnalysisResult:
     summary: str
     recommendation: str
     raw_response: str
-
+    disclaimer: str  # <--- NEW FIELD
 
 # ── Analyzer ──────────────────────────────────────────────────────────────────
 
 class ClauseAnalyzer:
-    def __init__(self, api_key: str | None = None):
-        self.api_key = api_key or os.getenv("GROQ_API_KEY")
-        if not self.api_key:
-            raise ValueError("GROQ_API_KEY not set. Add it to your .env file.")
-
-        self.client = Groq(api_key=self.api_key)
-        self.model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
-        self.max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "2048"))
-        self.temperature = float(os.getenv("GROQ_TEMPERATURE", "0.2"))
-
-        logger.info(f"ClauseAnalyzer initialized with model: {self.model}")
-
-    def analyze(self, contract_text: str) -> AnalysisResult:
-        """
-        Analyze contract text for predatory clauses.
-        Returns structured AnalysisResult.
-        """
-        if not contract_text or not contract_text.strip():
-            raise ValueError("Contract text cannot be empty.")
-
-        logger.info(f"Analyzing contract ({len(contract_text)} chars)...")
-
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": USER_PROMPT_TEMPLATE.format(
-                        contract_text=contract_text[:8000]  # stay within token limits
-                    )}
-                ],
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-            )
-
-            raw = response.choices[0].message.content
-            logger.info("Groq inference successful.")
-            return self._parse_response(raw)
-
-        except Exception as e:
-            logger.error(f"Groq API error: {e}")
-            raise
+    # ... (keep your __init__ and analyze methods) ...
 
     def _parse_response(self, raw: str) -> AnalysisResult:
-        """Parse Groq JSON response into AnalysisResult."""
         import json
         import re
-
-        # Strip markdown code fences if present
+        
+        # Strip markdown fences
         clean = re.sub(r"```(?:json)?|```", "", raw).strip()
+        data = json.loads(clean)
 
-        try:
-            data = json.loads(clean)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {e}\nRaw: {raw}")
-            raise ValueError(f"Model returned invalid JSON: {e}")
+        # Standard legal disclaimer text
+        legal_notice = (
+            "Lexrisk is an AI-powered assistant, not a legal professional. "
+            "This analysis is for informational purposes only and does not constitute "
+            "legal advice or an attorney-client relationship."
+        )
 
         flagged = [
             FlaggedClause(
-                clause_text=c.get("clause_text", ""),
-                category=c.get("category", "Unknown"),
-                severity=c.get("severity", "MEDIUM"),
-                plain_english=c.get("plain_english", ""),
-                red_flag=c.get("red_flag", ""),
+                clause_text=c.get("txt", ""),
+                category=c.get("cat", "General"),
+                severity=c.get("sev", "MEDIUM"),
+                plain_english=c.get("desc", ""),
+                red_flag=c.get("red", ""),
             )
-            for c in data.get("flagged_clauses", [])
+            for c in data.get("flags", [])
         ]
 
         return AnalysisResult(
-            risk_score=int(data.get("risk_score", 0)),
-            risk_level=data.get("risk_level", "LOW"),
+            risk_score=int(data.get("score", 0)),
+            risk_level=data.get("lvl", "LOW"),
             flagged_clauses=flagged,
-            summary=data.get("summary", ""),
-            recommendation=data.get("recommendation", "SIGN"),
+            summary=data.get("sum", ""),
+            recommendation=data.get("rec", "SIGN"),
             raw_response=raw,
+            disclaimer=legal_notice # <--- INJECTED HERE
         )
