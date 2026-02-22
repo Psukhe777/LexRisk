@@ -6,14 +6,25 @@ Run: streamlit run app.py
 import logging
 import os
 import sys
-
+import PyPDF2
 import streamlit as st
 from dotenv import load_dotenv
 
-# Configuration and imports
+# Fix pathing for local imports before Streamlit config
+sys.path.insert(0, os.path.dirname(__file__))
+from analyzer import ClauseAnalyzer
+from demo_data import DEMOS  
+
+# ── 1. Page Config (MUST BE FIRST STREAMLIT COMMAND) ──────────────────────────
+st.set_page_config(
+    page_title="LexRisk ⚖️",
+    page_icon="⚖️",
+    layout="centered",
+    initial_sidebar_state="expanded",
+)
+
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-
 sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import ClauseAnalyzer
 
@@ -165,7 +176,7 @@ st.caption("⚖️ **Legal:** Lexrisk is an AI tool, not a law firm. No legal ad
 st.markdown("""
 <div style='text-align: center; color: #666; font-size: 0.75rem; padding: 2rem 0;'>
     <p><strong>CLAUSE</strong> by Babylon Technologies</p>
-    <p>© 2026 Babylon Technologies. Building in public.</p>
+    <p>© 2026 Bablyon Technologies. Building in public.</p>
     <p><a href="https://bablyontech.org/" style="color: #c9a84c;">Back to Babylon Studio</a></p>
 </div>
 """, unsafe_allow_html=True)
