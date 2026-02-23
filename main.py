@@ -36,15 +36,21 @@ if 'demo_active' not in st.session_state:
 st.markdown("""
 <style>
     /* Hide the top header (hamburger, fork, deploy buttons) */
-    header {visibility: hidden;}
-    [data-testid="stHeader"] {visibility: hidden;}
-    [data-testid="stToolbar"] {visibility: hidden;}
+    header {visibility: hidden !important;}
+    [data-testid="stHeader"] {visibility: hidden !important;}
+    [data-testid="stToolbar"] {visibility: hidden !important;}
     
     /* Hide the main menu */
-    #MainMenu {visibility: hidden;}
+    #MainMenu {visibility: hidden !important;}
     
     /* Hide the footer (Made with Streamlit) */
-    footer {visibility: hidden;}
+    footer {visibility: hidden !important;}
+    
+    /* 🔴 HIDE THE 'HOSTED WITH STREAMLIT' BADGE 🔴 */
+    .viewerBadge_container__1QSob {display: none !important;}
+    .viewerBadge_link__1S137 {display: none !important;}
+    .viewerBadge_link__qHDOU {display: none !important;}
+    a[href^="https://streamlit.io/cloud"] {display: none !important;}
     
     /* Move content up slightly to fill the blank space left by the header */
     .block-container {
