@@ -10,7 +10,7 @@ RiskLex is an AI-driven legal analysis engine that scans, parses, and translates
 
 ---
 
-## ⚡
+## ⚡ Beta is live at https://lexrisk.streamlit.app/
 Built for extreme speed and accuracy, RiskLex bypasses traditional week-long product validation cycles. By Day 5, we have achieved:
 1. **Synthetic Market Validation:** Utilizing AI personas to run 10-minute multi-agent stress tests on the core logic.
 2. **Cloud Deployment:** Live continuous integration via Streamlit Community Cloud.
