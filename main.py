@@ -22,6 +22,7 @@ st.set_page_config(
 sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import ClauseAnalyzer
 from demo_data import DEMOS  
+from rate_limiter import get_user_id, check_rate_limit, increment_usage # <-- Rate Limiter Added
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -32,7 +33,7 @@ if 'contract_text' not in st.session_state:
 if 'demo_active' not in st.session_state:
     st.session_state.demo_active = False
 
-# ── 4. Styles & Branding Removal (Ghost Mode) ─────────────────────────────────
+# ── 4. Styles & Branding Removal (Nuclear Ghost Mode) ─────────────────────────
 st.markdown("""
 <style>
     /* Hide the top header (hamburger, fork, deploy buttons) */
@@ -46,10 +47,11 @@ st.markdown("""
     /* Hide the footer (Made with Streamlit) */
     footer {visibility: hidden !important;}
     
-    /* 🔴 HIDE THE 'HOSTED WITH STREAMLIT' BADGE 🔴 */
-    .viewerBadge_container__1QSob {display: none !important;}
-    .viewerBadge_link__1S137 {display: none !important;}
-    .viewerBadge_link__qHDOU {display: none !important;}
+    /* 🔴 THE 'HOSTED WITH STREAMLIT' BADGE NUCLEAR OPTION 🔴 */
+    [data-testid="viewerBadge"] {display: none !important;}
+    div[class^="viewerBadge"] {display: none !important;}
+    div[class*="viewerBadge"] {display: none !important;}
+    a[href*="streamlit.io/cloud"] {display: none !important;}
     a[href^="https://streamlit.io/cloud"] {display: none !important;}
     
     /* Move content up slightly to fill the blank space left by the header */
@@ -156,7 +158,7 @@ with col1:
 if not agreed:
     st.info("💡 Please check the box above to enable the analysis.")
 
-# ── 10. Core Analysis Logic ───────────────────────────────────────────────────
+# ── 10. Core Analysis Logic (With Rate Limiting) ──────────────────────────────
 if analyze_btn and st.session_state.contract_text.strip():
     try:
         # Check if we are running a frozen demo or a live API call
@@ -188,6 +190,15 @@ if analyze_btn and st.session_state.contract_text.strip():
                 st.session_state.demo_active = False # Fallback if text was modified
         
         if not st.session_state.demo_active:
+            
+            # --- 🛡️ RATE LIMIT CHECK 🛡️ ---
+            user_id = get_user_id()
+            allowed, remaining, reset_time = check_rate_limit(user_id, limit_type="analysis", max_daily=3)
+            
+            if not allowed:
+                st.error("🛑 Daily scan limit reached. Please try again tomorrow.")
+                st.stop() # Stops execution right here, protecting your API
+
             # Live Groq API Call
             api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
             if not api_key:
@@ -195,8 +206,11 @@ if analyze_btn and st.session_state.contract_text.strip():
                 st.stop()
                 
             analyzer = ClauseAnalyzer(api_key=api_key)
-            with st.spinner("Lexrisk is scanning for predatory language..."):
+            with st.spinner(f"Lexrisk is scanning for predatory language... ({remaining} scans remaining today)"):
                 result = analyzer.analyze(st.session_state.contract_text)
+                
+            # If the analysis succeeds without throwing an error, increment the usage
+            increment_usage(user_id, limit_type="analysis")
 
         # ── Display Results ──
         st.divider()
