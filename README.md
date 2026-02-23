@@ -1,16 +1,16 @@
 # 🏛️ Lexrisk AI-Powered Contract Intelligence 
 
-Sill In Development 🚧 Launch 02/23/26
+ 🚧 Launch 02/23/26
 
 > **"Nobody reads the Terms of Service. Until now."**
 
 RiskLex is an AI-driven legal analysis engine that scans, parses, and translates complex Terms of Service (ToS) and enterprise contracts into plain English. It instantly flags predatory clauses, data-harvesting policies, and hidden liabilities using advanced LLM reasoning.
 
-🚀 **Status:** Day 5 Development — Part of the **"6 Startups in 60 Days"** Challenge.
+🚀 **Status:** Beta is live. Part of the **"6 Startups in 60 Days"** Challenge.
 
 ---
 
-## ⚡ The Day 5 Milestone: Velocity & Validation
+## ⚡
 Built for extreme speed and accuracy, RiskLex bypasses traditional week-long product validation cycles. By Day 5, we have achieved:
 1. **Synthetic Market Validation:** Utilizing AI personas to run 10-minute multi-agent stress tests on the core logic.
 2. **Cloud Deployment:** Live continuous integration via Streamlit Community Cloud.
