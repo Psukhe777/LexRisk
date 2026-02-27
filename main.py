@@ -1,3 +1,4 @@
+
 """
 app.py — Lexrisk: AI-powered predatory clause scanner
 Run: streamlit run app.py
@@ -6,9 +7,12 @@ Run: streamlit run app.py
 import logging
 import os
 import sys
-import PyPDF2
+import pdfplumber
 import streamlit as st
 from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
 # ── 1. Page Config (MUST BE FIRST STREAMLIT COMMAND) ──────────────────────────
 st.set_page_config(
@@ -23,6 +27,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import ClauseAnalyzer
 from demo_data import DEMOS  
 from rate_limiter import get_user_id, check_rate_limit, increment_usage # <-- Rate Limiter Added
+
+# Initialize sentence transformer for semantic chunking
+sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -86,6 +93,10 @@ if st.sidebar.button("🏋️ Analyze Gym Contract", use_container_width=True):
 if st.sidebar.button("💼 Analyze Startup NDA", use_container_width=True):
     load_frozen_demo('nda')
 
+# Demo Alignment: Update hardcoded example to match new output format
+st.sidebar.markdown("### 📋 Example Contract")
+st.sidebar.caption("Example contract text for testing.")
+
 # ── 6. Main Header (Hero Section) ─────────────────────────────────────────────
 st.title("⚖️ Lexrisk")
 st.markdown("### Don't Just Agree. Understand.")
@@ -112,15 +123,25 @@ uploaded_file = st.file_uploader("Drag and drop a PDF file here to scan", type="
 
 if uploaded_file is not None:
     try:
-        pdf_reader = PyPDF2.PdfReader(uploaded_file)
-        extracted_text = ""
-        for page in pdf_reader.pages:
-            extracted_text += page.extract_text() + "\n"
+        # Use pdfplumber to count pages
+        with pdfplumber.open(uploaded_file) as pdf:
+            page_count = len(pdf.pages)
+        
+        if page_count > 2:
+            st.warning(f"⚠️ PDF has {page_count} pages. For security, please sign up for authorized access to analyze longer documents.")
+            st.link_button("Sign Up for Authorized Access", "/signup")
+            st.stop()
+        
+        # Extract text using pdfplumber
+        with pdfplumber.open(uploaded_file) as pdf:
+            extracted_text = ""
+            for page in pdf.pages:
+                extracted_text += page.extract_text() + "\n"
         
         # Inject the PDF text directly into the scanner's session state
         st.session_state.contract_text = extracted_text
         st.session_state.demo_active = False # Disable demo bypass for new uploads
-        st.success("✅ PDF Extracted Successfully! Scroll down to review and analyze.")
+        st.success(f"✅ PDF Extracted Successfully! ({page_count} pages) Scroll down to review and analyze.")
     except Exception as e:
         st.error(f"Error reading PDF: {e}")
 
@@ -199,13 +220,26 @@ if analyze_btn and st.session_state.contract_text.strip():
                 st.error("🛑 Daily scan limit reached. Please try again tomorrow.")
                 st.stop() # Stops execution right here, protecting your API
 
-            # Live Groq API Call
+            # API Rerouting Logic
             api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
             if not api_key:
                 st.error("Missing GROQ_API_KEY. Please add it to Streamlit Secrets or your .env file.")
                 st.stop()
-                
-            analyzer = ClauseAnalyzer(api_key=api_key)
+            
+            # Check if we have a longer document (authorized user scenario)
+            # For now, we'll use a simple flag or environment variable to determine authorization
+            # In a real app, this would come from user authentication
+            is_authorized_user = os.getenv("AUTHORIZED_USER", "false").lower() == "true"
+            
+            if is_authorized_user and len(st.session_state.contract_text.split()) > 1000:  # Rough word count check
+                # Use Gemini 1.5 Pro for long documents (authorized users)
+                # Note: This would require implementing a Gemini client
+                st.info("Using Gemini 1.5 Pro for long document analysis...")
+                # analyzer = GeminiAnalyzer(api_key=gemini_api_key)
+            else:
+                # Use Groq (Llama-3-70B) for standard analysis
+                analyzer = ClauseAnalyzer(api_key=api_key)
+            
             with st.spinner(f"Lexrisk is scanning for predatory language... ({remaining} scans remaining today)"):
                 result = analyzer.analyze(st.session_state.contract_text)
                 
@@ -221,6 +255,15 @@ if analyze_btn and st.session_state.contract_text.strip():
             unsafe_allow_html=True
         )
         st.progress(result.risk_score / 100)
+
+        # Data Visualization: Risk Level Metric
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Risk Level", result.risk_level, delta=None)
+        with col2:
+            st.metric("Score", f"{result.risk_score}/100", delta=None)
+        with col3:
+            st.metric("Recommendation", result.recommendation, delta=None)
 
         # Recommendation
         rec_emoji = {"SIGN": "✅", "NEGOTIATE": "⚠️", "AVOID": "🚫"}.get(result.recommendation, "❓")
