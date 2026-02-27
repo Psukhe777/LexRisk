@@ -1,4 +1,3 @@
-
 """
 app.py — Lexrisk: AI-powered predatory clause scanner
 Run: streamlit run app.py
@@ -10,9 +9,10 @@ import sys
 import pdfplumber
 import streamlit as st
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
+
+# Note: SentenceTransformer imports are removed here unless explicitly used 
+# in this top-level file to save memory. Move them to analyzer.py if they 
+# are only used during the actual semantic chunking process.
 
 # ── 1. Page Config (MUST BE FIRST STREAMLIT COMMAND) ──────────────────────────
 st.set_page_config(
@@ -22,25 +22,32 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── 2. Local Imports & Config ─────────────────────────────────────────────────
+# ── 2. Secure Secrets & Environment Loading ────────────────────────────────────
+try:
+    groq_key = st.secrets["GROQ_API_KEY"]
+    gemini_key = st.secrets["GEMINI_API_KEY"]
+    # Default to 8000 if not found in secrets
+    router_threshold = st.secrets.get("ROUTER_TOKEN_THRESHOLD", 8000) 
+except KeyError as e:
+    st.error(f"🚨 System Configuration Error: Missing Secret {e}")
+    st.stop()
+
+# ── 3. Local Imports & Config ─────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import ClauseAnalyzer
 from demo_data import DEMOS  
-from rate_limiter import get_user_id, check_rate_limit, increment_usage # <-- Rate Limiter Added
-
-# Initialize sentence transformer for semantic chunking
-sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+from rate_limiter import get_user_id, check_rate_limit, increment_usage 
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
-# ── 3. Session State Initialization ───────────────────────────────────────────
+# ── 4. Session State Initialization ───────────────────────────────────────────
 if 'contract_text' not in st.session_state:
     st.session_state.contract_text = ""
 if 'demo_active' not in st.session_state:
     st.session_state.demo_active = False
 
-# ── 4. Styles & Branding Removal (Nuclear Ghost Mode) ─────────────────────────
+# ── 5. Styles & Branding Removal (Nuclear Ghost Mode) ─────────────────────────
 st.markdown("""
 <style>
     /* Hide the top header (hamburger, fork, deploy buttons) */
@@ -76,7 +83,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── 5. Sidebar Demos (Zero Latency) ───────────────────────────────────────────
+# ── 6. Sidebar Demos (Zero Latency) ───────────────────────────────────────────
 st.sidebar.markdown("### ⚡ Instant Demos")
 st.sidebar.caption("Pre-computed to bypass API limits during launch.")
 
@@ -93,11 +100,10 @@ if st.sidebar.button("🏋️ Analyze Gym Contract", use_container_width=True):
 if st.sidebar.button("💼 Analyze Startup NDA", use_container_width=True):
     load_frozen_demo('nda')
 
-# Demo Alignment: Update hardcoded example to match new output format
 st.sidebar.markdown("### 📋 Example Contract")
 st.sidebar.caption("Example contract text for testing.")
 
-# ── 6. Main Header (Hero Section) ─────────────────────────────────────────────
+# ── 7. Main Header (Hero Section) ─────────────────────────────────────────────
 st.title("⚖️ Lexrisk")
 st.markdown("### Don't Just Agree. Understand.")
 st.markdown("""
@@ -117,23 +123,30 @@ Babylon Technologies provides this service "as is" without warranties.
 """)
 st.divider()
 
-# ── 7. PDF Uploader (World-Class Feature) ─────────────────────────────────────
+# ── 8. PDF Uploader (World-Class Feature) ─────────────────────────────────────
 st.markdown("### 📄 Upload a Contract (PDF)")
 uploaded_file = st.file_uploader("Drag and drop a PDF file here to scan", type="pdf")
 
+# Rough word-to-token estimation (1 token ≈ 0.75 words)
+def estimate_tokens(text):
+    return int(len(text.split()) / 0.75)
+
 if uploaded_file is not None:
     try:
-        # Use pdfplumber to count pages
+        # Use pdfplumber to count pages and extract text
         with pdfplumber.open(uploaded_file) as pdf:
             page_count = len(pdf.pages)
-        
-        if page_count > 2:
-            st.warning(f"⚠️ PDF has {page_count} pages. For security, please sign up for authorized access to analyze longer documents.")
-            st.link_button("Sign Up for Authorized Access", "/signup")
-            st.stop()
-        
-        # Extract text using pdfplumber
-        with pdfplumber.open(uploaded_file) as pdf:
+            
+            # --- 🛡️ 2-PAGE PDF LIMIT / PRO REROUTE 🛡️ ---
+            if page_count > 2:
+                st.error(f"🛑 **Document Too Large ({page_count} pages).**")
+                st.warning("The free tier is limited to 2 pages to ensure high-speed processing. "
+                           "To scan massive documents (like 50-page Terms of Service) with our high-context AI, "
+                           "please upgrade to Lexrisk Pro.")
+                # The explicit reroute button
+                st.link_button("Upgrade to Lexrisk Pro", "https://bablyontech.org/lexrisk/pro", type="primary")
+                st.stop()
+            
             extracted_text = ""
             for page in pdf.pages:
                 extracted_text += page.extract_text() + "\n"
@@ -147,7 +160,7 @@ if uploaded_file is not None:
 
 st.markdown("---")
 
-# ── 8. Main Input Area ────────────────────────────────────────────────────────
+# ── 9. Main Input Area ────────────────────────────────────────────────────────
 contract_text = st.text_area(
     "Paste your contract or Terms of Service here",
     value=st.session_state.contract_text,
@@ -160,7 +173,7 @@ if contract_text != st.session_state.contract_text:
     st.session_state.contract_text = contract_text
     st.session_state.demo_active = False  # They edited it, so it's no longer a pure demo
 
-# ── 9. Clickwrap & Analysis Trigger ───────────────────────────────────────────
+# ── 10. Clickwrap & Analysis Trigger ───────────────────────────────────────────
 st.markdown("---")
 agreed = st.checkbox(
     "I understand Lexrisk is an AI tool and not a substitute for professional legal advice. "
@@ -179,16 +192,14 @@ with col1:
 if not agreed:
     st.info("💡 Please check the box above to enable the analysis.")
 
-# ── 10. Core Analysis Logic (With Rate Limiting) ──────────────────────────────
+# ── 11. Core Analysis Logic (With LLM Router & Rate Limiting) ─────────────────
 if analyze_btn and st.session_state.contract_text.strip():
     try:
         # Check if we are running a frozen demo or a live API call
         if st.session_state.demo_active:
-            # Bypass Groq entirely, use the frozen data based on matching text
             demo_match = next((d['analysis'] for d in DEMOS.values() if d['text'] == st.session_state.contract_text), None)
             if demo_match:
                 result_data = demo_match
-                # Reconstruct an object-like structure to match your analyzer output
                 class DummyResult: pass
                 result = DummyResult()
                 result.risk_score = result_data['risk_score']
@@ -208,7 +219,7 @@ if analyze_btn and st.session_state.contract_text.strip():
                 result.flagged_clauses = [DummyClause(c) for c in result_data['flagged_clauses']]
                 st.success("⚡ Instant Demo Loaded (API Bypassed)")
             else:
-                st.session_state.demo_active = False # Fallback if text was modified
+                st.session_state.demo_active = False
         
         if not st.session_state.demo_active:
             
@@ -218,27 +229,21 @@ if analyze_btn and st.session_state.contract_text.strip():
             
             if not allowed:
                 st.error("🛑 Daily scan limit reached. Please try again tomorrow.")
-                st.stop() # Stops execution right here, protecting your API
-
-            # API Rerouting Logic
-            api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
-            if not api_key:
-                st.error("Missing GROQ_API_KEY. Please add it to Streamlit Secrets or your .env file.")
                 st.stop()
+
+            # --- 🚦 THE LLM ROUTER 🚦 ---
+            token_count = estimate_tokens(st.session_state.contract_text)
             
-            # Check if we have a longer document (authorized user scenario)
-            # For now, we'll use a simple flag or environment variable to determine authorization
-            # In a real app, this would come from user authentication
-            is_authorized_user = os.getenv("AUTHORIZED_USER", "false").lower() == "true"
-            
-            if is_authorized_user and len(st.session_state.contract_text.split()) > 1000:  # Rough word count check
-                # Use Gemini 1.5 Pro for long documents (authorized users)
-                # Note: This would require implementing a Gemini client
-                st.info("Using Gemini 1.5 Pro for long document analysis...")
-                # analyzer = GeminiAnalyzer(api_key=gemini_api_key)
+            if token_count > router_threshold:
+                # ROUTE TO GEMINI 1.5 PRO
+                st.info(f"🧠 Massive document detected (~{token_count} tokens). Routing to Gemini 1.5 Pro High-Context Engine...")
+                # NOTE: You will need to ensure ClauseAnalyzer in analyzer.py can accept 
+                # a 'model_provider' flag and the gemini_key to switch APIs internally.
+                analyzer = ClauseAnalyzer(api_key=gemini_key, provider="gemini") 
             else:
-                # Use Groq (Llama-3-70B) for standard analysis
-                analyzer = ClauseAnalyzer(api_key=api_key)
+                # ROUTE TO GROQ (LLAMA-3)
+                st.info(f"⚡ Standard document detected (~{token_count} tokens). Routing to Groq Llama-3 Speed Engine...")
+                analyzer = ClauseAnalyzer(api_key=groq_key, provider="groq")
             
             with st.spinner(f"Lexrisk is scanning for predatory language... ({remaining} scans remaining today)"):
                 result = analyzer.analyze(st.session_state.contract_text)
@@ -246,7 +251,7 @@ if analyze_btn and st.session_state.contract_text.strip():
             # If the analysis succeeds without throwing an error, increment the usage
             increment_usage(user_id, limit_type="analysis")
 
-        # ── Display Results ──
+        # ── 12. Display Results ──
         st.divider()
         risk_class = f"risk-{result.risk_level.lower()}"
         st.markdown(f"### Overall Risk Score")
@@ -288,9 +293,10 @@ if analyze_btn and st.session_state.contract_text.strip():
         st.warning(f"⚖️ **Legal Notice:** {result.disclaimer}")
 
     except Exception as e:
-        st.error(f"Analysis failed: {e}")
+        # User-friendly error boundary (No raw crashes)
+        st.error(f"Analysis failed. The document may be too complex or the API is currently overloaded. Detail: {e}")
 
-# ── 11. Footer ────────────────────────────────────────────────────────────────
+# ── 13. Footer ────────────────────────────────────────────────────────────────
 st.divider()
 st.caption("🔒 **Privacy:** Data is analyzed in memory and immediately discarded. No storage.")
 st.caption("⚖️ **Legal:** Lexrisk is an AI tool, not a law firm. No legal advice provided.")
