@@ -221,7 +221,7 @@ class ClauseAnalyzer:
         if self.groq_key:
             try:
                 self.groq_client = Groq(api_key=self.groq_key)
-                # Updated to newest flagshsip versatile model
+                # Updated to newest flagship versatile model
                 self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
                 logger.info("✅ Groq engine initialized")
             except Exception as e:
