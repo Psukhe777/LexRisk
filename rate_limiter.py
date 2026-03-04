@@ -1,4 +1,3 @@
-
 import streamlit as st
 from datetime import datetime
 import json
@@ -93,5 +92,5 @@ def increment_usage(user_id, limit_type="analysis"):
     if user_key not in limits:
         limits[user_key] = {"date": today, "count": 0}
         
-    limits[user_key]["count"] += 1
+    limits[user_key]["count"] += 2
     save_limits(limits)
