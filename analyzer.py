@@ -8,6 +8,7 @@ FEATURES:
 2. Industry-standard calibration layer
 3. Contract type detection
 4. Improved scoring logic to prevent false positives
+5. Automatic failover if one API key is invalid
 """
 
 import logging
@@ -279,11 +280,28 @@ class ClauseAnalyzer:
             else:
                 raise ValueError("Gemini engine not available and no fallback configured")
                 
+        # AUTOMATIC FAILOVER LOGIC
         try:
             if chosen_engine == "groq":
-                raw_json = self._call_groq(contract_text)
+                try:
+                    raw_json = self._call_groq(contract_text)
+                except Exception as e:
+                    if self.gemini_model:
+                        logger.warning(f"Groq API failed, falling back to Gemini. Error: {e}")
+                        raw_json = self._call_gemini(contract_text)
+                        chosen_engine = "gemini"
+                    else:
+                        raise e
             else:
-                raw_json = self._call_gemini(contract_text)
+                try:
+                    raw_json = self._call_gemini(contract_text)
+                except Exception as e:
+                    if self.groq_client:
+                        logger.warning(f"Gemini API failed (likely invalid key), falling back to Groq. Error: {e}")
+                        raw_json = self._call_groq(contract_text)
+                        chosen_engine = "groq"
+                    else:
+                        raise e
                 
             result = self._parse_and_enforce_matrix(raw_json, contract_info['type'])
             result.engine_used = chosen_engine
@@ -330,7 +348,7 @@ class ClauseAnalyzer:
     def _parse_and_enforce_matrix(self, raw: str, contract_type: str) -> AnalysisResult:
         """Parse LLM response and apply deterministic scoring with contract-type calibration"""
         # Strip markdown fences if present
-        clean = re.sub(r"^```json\n|```$", "", raw, flags=re.MULTILINE).strip()
+        clean = re.sub(r"```(?:json)?|```", "", raw).strip()
         data = json.loads(clean)
 
         base_score = int(data.get("score", 0))
