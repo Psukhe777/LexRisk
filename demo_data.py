@@ -1,126 +1,207 @@
+import json
+import os
+from analyzer import ClauseAnalyzer
 """
-demo_data.py
-Pre-computed contract analysis for instant sidebar demos.
-Aligned with the Lexrisk 'Ruthless Lawyer' scoring matrix.
+analyzer.py
+Core Groq integration — scans contract text for predatory clauses.
 """
 
-DEMOS = {
-  "x_tos": {
-    "title": "Demos/X Tos",
-    "text": "Terms of Service \nSummary of our Terms \nThese Terms of Service (“Terms”) are part of the User Agreement – a legally binding \ncontract governing your relationship with X... [Text Truncated for Demo] ...our aggregate liability \nshall not exceed the greater of $100 USD or the amount you paid us, if any, in the past six \nmonths for the Services giving rise to the claim.",
-    "analysis": {
-      "risk_score": 85,
-      "risk_level": "HIGH",
-      "flagged_clauses": [
-        {
-          "clause_text": "We provide the Services on an \"AS IS\" and \"AS AVAILABLE\" basis, and we disclaim all warranties, responsibility, and liability to you or others to the extent permitted by law.",
-          "category": "Broad Indemnification / Waiver",
-          "severity": "HIGH",
-          "plain_english": "The company takes zero responsibility if their platform damages your device, business, or reputation.",
-          "red_flag": "Complete waiver of service guarantees."
-        },
-        {
-          "clause_text": "our aggregate liability shall not exceed the greater of $100 USD or the amount you paid us, if any, in the past six months for the Services giving rise to the claim.",
-          "category": "Severe Limitation of Liability",
-          "severity": "CRITICAL",
-          "plain_english": "If the company's negligence costs you millions, the maximum you can sue them for is $100.",
-          "red_flag": "Absurdly low liability cap ($100)."
-        },
-        {
-          "clause_text": "You provide us with a broad, royalty-free license to make your Content available to the rest of the world and to let others do the same.",
-          "category": "Perpetual Licensing / IP Rights",
-          "severity": "MEDIUM",
-          "plain_english": "You still own your content, but you give them the right to use, sell, or distribute it globally without paying you a dime.",
-          "red_flag": "Broad, royalty-free IP license."
-        }
-      ],
-      "summary": "This contract heavily insulates X from any legal or financial responsibility. By capping liability at $100 and taking a broad, free license to your intellectual property, the risk is entirely transferred to the user.",
-      "recommendation": "NEGOTIATE"
+import logging
+import os
+import json
+import re
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
+from groq import Groq
+
+load_dotenv()
+logger = logging.getLogger(__name__)
+
+# ── Prompt ────────────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT = """Role: CLAUSE, expert AI legal analyst.
+Task: Extract predatory/dangerous clauses from contracts into strict JSON.
+
+Rules:
+- Output ONLY valid JSON. No markdown, no preamble.
+- Flag only genuinely concerning clauses; ignore standard boilerplate.
+- If none found: empty `flags` array, low `score`.
+
+JSON Format:
+{
+  "score": 0,
+  "lvl": "LOW|MEDIUM|HIGH|CRITICAL",
+  "flags": [
+    {
+      "txt": "Exact excerpt",
+      "cat": "Category (e.g., Arbitration, Auto-Renewal)",
+      "sev": "LOW|MEDIUM|HIGH|CRITICAL",
+      "desc": "1-2 sentence plain-English explanation",
+      "red": "Specific red flag"
     }
-  },
-  "tiktok": {
-    "title": "Demos/Tiktok Tos",
-    "text": "Tiktok\n\nTerms of Service\n\nLast updated: January 22, 2026\n\nWelcome to TikTok... [Text Truncated for Demo] ...YOU AND TIKTOK USDS JOINT VENTURE AGREE THAT YOU MUST INITIATE ANY PROCEEDING OR ACTION WITHIN ONE (1) YEAR OF THE DATE OF THE OCCURRENCE OF THE EVENT...",
-    "analysis": {
-      "risk_score": 95,
-      "risk_level": "CRITICAL",
-      "flagged_clauses": [
-        {
-          "clause_text": "We may remove or restrict access to any content, including yours, whether publicly or privately posted, for any reason...",
-          "category": "Termination for Convenience",
-          "severity": "HIGH",
-          "plain_english": "They can delete your account, your audience, and your business on their platform at any time, without giving you a reason.",
-          "red_flag": "Account termination without cause."
-        },
-        {
-          "clause_text": "YOU AND TIKTOK USDS JOINT VENTURE AGREE THAT YOU MUST INITIATE ANY PROCEEDING OR ACTION WITHIN ONE (1) YEAR OF THE DATE OF THE OCCURRENCE OF THE EVENT...",
-          "category": "Statute of Limitations Reduction",
-          "severity": "CRITICAL",
-          "plain_english": "You are giving up your legal right to the standard statute of limitations, giving you only 12 months to realize you were wronged and file a lawsuit.",
-          "red_flag": "Drastic reduction of your right to sue."
-        },
-        {
-          "clause_text": "Any claim, cause of action or dispute... shall also be resolved exclusively in the U.S. District Court for the Central District of California...",
-          "category": "Inconvenient Venue",
-          "severity": "HIGH",
-          "plain_english": "If you want to sue them, you are forced to travel to California and hire a California-licensed attorney to do so.",
-          "red_flag": "Forces out-of-state litigation."
+  ],
+  "sum": "2-3 sentence overall assessment",
+  "rec": "SIGN|NEGOTIATE|AVOID"
+}"""
+
+USER_PROMPT_TEMPLATE = """Contract:
+---
+{contract_text}
+---"""
+
+# ── Data Classes ──────────────────────────────────────────────────────────────
+
+@dataclass
+class FlaggedClause:
+    clause_text: str
+    category: str
+    severity: str
+    plain_english: str
+    red_flag: str
+
+@dataclass
+class AnalysisResult:
+    risk_score: int
+    risk_level: str
+    flagged_clauses: list[FlaggedClause]
+    summary: str
+    recommendation: str
+    raw_response: str
+    disclaimer: str
+
+# ── Analyzer ──────────────────────────────────────────────────────────────────
+
+class ClauseAnalyzer:
+    def __init__(self, api_key: str | None = None):
+        # Try multiple sources for API key
+        if api_key:
+            self.api_key = api_key
+        else:
+            try:
+                import streamlit as st
+                self.api_key = st.secrets.get("GROQ_API_KEY")
+            except:
+                self.api_key = os.getenv("GROQ_API_KEY")
+        
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY not set. Add it to Streamlit secrets or .env file.")
+        
+        self.client = Groq(api_key=self.api_key)
+        self.model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        self.max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "2048"))
+        self.temperature = float(os.getenv("GROQ_TEMPERATURE", "0.2"))
+
+        logger.info(f"ClauseAnalyzer initialized with model: {self.model}")
+
+    def analyze(self, contract_text: str) -> AnalysisResult:
+        """Analyze contract text for predatory clauses."""
+        if not contract_text or not contract_text.strip():
+            raise ValueError("Contract text cannot be empty.")
+
+        logger.info(f"Analyzing contract ({len(contract_text)} chars)...")
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": USER_PROMPT_TEMPLATE.format(
+                        contract_text=contract_text[:8000]
+                    )}
+                ],
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+            )
+
+            raw = response.choices[0].message.content
+            logger.info("Groq inference successful.")
+            return self._parse_response(raw)
+
+        except Exception as e:
+            logger.error(f"Groq API error: {e}")
+            raise
+
+    def _parse_response(self, raw: str) -> AnalysisResult:
+        """Parse Groq JSON response into AnalysisResult."""
+        # Strip markdown fences
+        clean = re.sub(r"```(?:json)?|```", "", raw).strip()
+        data = json.loads(clean)
+
+        # Standard legal disclaimer text
+        legal_notice = (
+            "Lexrisk is an AI-powered assistant, not a legal professional. "
+            "This analysis is for informational purposes only and does not constitute "
+            "legal advice or an attorney-client relationship."
+        )
+
+        flagged = [
+            FlaggedClause(
+                clause_text=c.get("txt", ""),
+                category=c.get("cat", "General"),
+                severity=c.get("sev", "MEDIUM"),
+                plain_english=c.get("desc", ""),
+                red_flag=c.get("red", ""),
+            )
+            for c in data.get("flags", [])
+        ]
+
+        return AnalysisResult(
+            risk_score=int(data.get("score", 0)),
+            risk_level=data.get("lvl", "LOW"),
+            flagged_clauses=flagged,
+            summary=data.get("sum", ""),
+            recommendation=data.get("rec", "SIGN"),
+            raw_response=raw,
+            disclaimer=legal_notice
+        )
+analyzer = ClauseAnalyzer()
+
+# THIS LINE FIXES THE ERROR
+demos_data = {} 
+
+files = {
+    'x_tos': 'demos/x_tos.txt',
+    'tiktok': 'demos/tiktik_tos.txt', 
+    'gym': 'demos/gym_agreement.txt',
+    'nda': 'demos/nda_agreement.txt'
+}
+for key, filename in files.items():
+    print(f"Analyzing {filename}...")
+    
+    with open(filename, 'r', encoding='utf-8') as f:
+        text = f.read()
+    
+    result = analyzer.analyze(text)
+    
+    demos_data[key] = {
+        'title': filename.replace('_', ' ').replace('.txt', '').title(),
+        'text': text,
+        'analysis': {
+            'risk_score': result.risk_score,
+            'risk_level': result.risk_level,
+            'flagged_clauses': [
+                {
+                    'clause_text': c.clause_text,
+                    'category': c.category,
+                    'severity': c.severity,
+                    'plain_english': c.plain_english,
+                    'red_flag': c.red_flag
+                }
+                for c in result.flagged_clauses
+            ],
+            'summary': result.summary,
+            'recommendation': result.recommendation
         }
-      ],
-      "summary": "A highly predatory social media contract. It artificially reduces your window to take legal action to one year, forces all lawsuits to happen in California, and grants the company the right to terminate your account without cause.",
-      "recommendation": "AVOID"
     }
-  },
-  "gym": {
-    "title": "Demos/Gym Agreement",
-    "text": "Last updated: 11/10/22\n\nThese Website Terms and Conditions of Use... [Text Truncated for Demo] ...BE RESOLVED EXCLUSIVELY BY BINDING ARBITRATION BEFORE THE AMERICAN ARBITRATION ASSOCIATION... THIS MEANS NEITHER YOU NOR THE PLANET FITNESS PARTIES MAY JOIN CLAIMS IN ARBITRATION WITH OR AGAINST OTHER USERS...",
-    "analysis": {
-      "risk_score": 92,
-      "risk_level": "CRITICAL",
-      "flagged_clauses": [
-        {
-          "clause_text": "BE RESOLVED EXCLUSIVELY BY BINDING ARBITRATION BEFORE THE AMERICAN ARBITRATION ASSOCIATION...",
-          "category": "Binding Arbitration",
-          "severity": "CRITICAL",
-          "plain_english": "You are signing away your constitutional right to a trial by a judge or jury. You must settle disputes in private arbitration, which heavily favors the corporation.",
-          "red_flag": "Strips your right to a jury trial."
-        },
-        {
-          "clause_text": "THIS MEANS NEITHER YOU NOR THE PLANET FITNESS PARTIES MAY JOIN CLAIMS IN ARBITRATION WITH OR AGAINST OTHER USERS, OR LITIGATE IN COURT OR ARBITRATE ANY CLAIMS AS A REPRESENTATIVE OR MEMBER OF A CLASS.",
-          "category": "Class Action Waiver",
-          "severity": "CRITICAL",
-          "plain_english": "If the gym illegally overcharges 100,000 members, you cannot band together to sue them. You must fight them individually, making it financially impossible.",
-          "red_flag": "Prevents class-action lawsuits."
-        },
-        {
-          "clause_text": "unsolicited information and content submitted to this Site is assigned to Planet Fitness free of charge, together with all worldwide rights...",
-          "category": "Perpetual Licensing / IP Theft",
-          "severity": "HIGH",
-          "plain_english": "Any idea, feedback, or content you submit to their site instantly becomes their property without them paying you.",
-          "red_flag": "Uncompensated intellectual property assignment."
-        }
-      ],
-      "summary": "This contract contains the two most dangerous clauses in modern consumer law: Binding Arbitration and a Class Action Waiver. By signing this, you completely surrender your ability to hold the company accountable in a court of law.",
-      "recommendation": "AVOID"
-    }
-  },
-  "nda": {
-    "title": "Demos/Nda Agreement",
-    "text": "NON-DISCLOSURE AGREEMENT (NDA)...",
-    "analysis": {
-      "risk_score": 15,
-      "risk_level": "LOW",
-      "flagged_clauses": [
-        {
-          "clause_text": "Receiving Party shall return to Disclosing Party any and all records, notes, and other written, printed, or tangible materials in its possession pertaining to Confidential Information immediately if Disclosing Party requests it in writing.",
-          "category": "Data Destruction / Return",
-          "severity": "LOW",
-          "plain_english": "You must immediately delete or return all confidential data the moment they ask for it, which is a standard security protocol.",
-          "red_flag": "Strict document return policy."
-        }
-      ],
-      "summary": "This is a highly standard, mutual Non-Disclosure Agreement. It contains fair exclusions for public knowledge and includes the standard federal immunity clause for whistleblowers. There are no predatory traps here.",
-      "recommendation": "SIGN"
-    }
+    
+    print(f"✓ {key}: Risk {result.risk_score}/100")
+
+# Save to Python file
+with open('demo_data.py', 'w') as f:
+    f.write("DEMOS = ")
+    f.write(json.dumps(demos_data, indent=2))
+
+print("\n✓ Generated demo_data.py")
   }
 }
