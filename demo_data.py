@@ -203,5 +203,3 @@ with open('demo_data.py', 'w') as f:
     f.write(json.dumps(demos_data, indent=2))
 
 print("\n✓ Generated demo_data.py")
-  }
-}
