@@ -106,8 +106,8 @@ class AnalysisResult:
     recommendation: str
     raw_response: str
     disclaimer: str
-    engine_used: str = "groq"  # NEW: Track which engine was used
-    contract_type: str = "Unknown"  # NEW: Detected contract type
+    engine_used: str = "groq"  
+    contract_type: str = "Unknown"  
 
 # ── 3. Contract Type Detector ─────────────────────────────────────────────────
 
@@ -178,53 +178,30 @@ class EngineRouter:
     
     @staticmethod
     def choose_engine(contract_text: str, contract_type: str) -> str:
-        """
-        Returns: "groq" or "gemini"
-        
-        Routing Logic:
-        - Gemini: Long contracts (>4000 chars), Social Media ToS, Unknown types
-        - Groq: Short contracts, B2B (needs aggressive analysis), Employment (clear red flags)
-        """
         text_length = len(contract_text)
         
         # Route to Gemini for:
-        # 1. Long/complex contracts (better reasoning)
         if text_length > 4000:
             logger.info(f"Routing to GEMINI: Long contract ({text_length} chars)")
             return "gemini"
-            
-        # 2. Social media (needs calibration to avoid false positives)
         if contract_type == "social_media":
             logger.info("Routing to GEMINI: Social media platform (needs calibration)")
             return "gemini"
-            
-        # 3. Unknown types (safer to use more nuanced model)
         if contract_type == "unknown":
             logger.info("Routing to GEMINI: Unknown contract type (safer)")
             return "gemini"
-            
-        # 4. Consumer apps with many clauses (avoid over-scoring)
         if contract_type == "consumer" and text_length > 2000:
             logger.info("Routing to GEMINI: Complex consumer app")
             return "gemini"
             
-        # Route to Groq for:
-        # 1. Short contracts (fast, efficient)
-        # 2. B2B contracts (aggressive scoring is appropriate)
-        # 3. Employment (clear-cut red flags)
+        # Route to Groq for short, B2B, or Employment contracts
         logger.info(f"Routing to GROQ: {contract_type} contract ({text_length} chars)")
         return "groq"
 
 # ── 5. Analyzer Engine (ENHANCED) ─────────────────────────────────────────────
 
 class ClauseAnalyzer:
-    def __init__(self, groq_key: str = None, gemini_key: str = None, provider: str = "auto"):
-        """
-        Args:
-            groq_key: Groq API key (optional if using Gemini only)
-            gemini_key: Gemini API key (optional if using Groq only)
-            provider: "groq", "gemini", or "auto" (intelligent routing)
-        """
+    def __init__(self, api_key: str = None, groq_key: str = None, gemini_key: str = None, provider: str = "auto"):
         self.provider = provider.lower()
         
         # SAFELY fetch keys from arguments, Streamlit secrets, or Environment variables
@@ -236,8 +213,8 @@ class ClauseAnalyzer:
             st_groq = None
             st_gemini = None
             
-        self.groq_key = groq_key or st_groq or os.getenv("GROQ_API_KEY")
-        self.gemini_key = gemini_key or st_gemini or os.getenv("GEMINI_API_KEY")
+        self.groq_key = groq_key or (api_key if self.provider in ["groq", "auto"] else None) or st_groq or os.getenv("GROQ_API_KEY")
+        self.gemini_key = gemini_key or (api_key if self.provider in ["gemini", "auto"] else None) or st_gemini or os.getenv("GEMINI_API_KEY")
         
         # Initialize Groq if available
         if self.groq_key:
@@ -272,19 +249,14 @@ class ClauseAnalyzer:
         logger.info(f"ClauseAnalyzer initialized with provider mode: {self.provider.upper()}")
 
     def analyze(self, contract_text: str, force_engine: Optional[str] = None) -> AnalysisResult:
-        """
-        Analyze contract with intelligent engine routing
-        """
         if not contract_text or not contract_text.strip():
             raise ValueError("Contract text cannot be empty.")
 
         logger.info(f"Analyzing contract ({len(contract_text)} chars)...")
         
-        # Step 1: Detect contract type
         contract_info = ContractTypeDetector.detect(contract_text)
         logger.info(f"Contract type detected: {contract_info['type']} (confidence: {contract_info['confidence']:.2f})")
         
-        # Step 2: Choose engine (unless forced)
         if force_engine:
             chosen_engine = force_engine.lower()
             logger.info(f"Engine override: {chosen_engine.upper()}")
@@ -293,7 +265,6 @@ class ClauseAnalyzer:
         else:
             chosen_engine = self.provider
             
-        # Step 3: Validate chosen engine is available
         if chosen_engine == "groq" and not self.groq_client:
             if self.gemini_model:
                 logger.warning("Groq requested but unavailable, falling back to Gemini")
@@ -308,14 +279,12 @@ class ClauseAnalyzer:
             else:
                 raise ValueError("Gemini engine not available and no fallback configured")
                 
-        # Step 4: Call the chosen engine
         try:
             if chosen_engine == "groq":
                 raw_json = self._call_groq(contract_text)
-            else:  # gemini
+            else:
                 raw_json = self._call_gemini(contract_text)
                 
-            # Step 5: Parse and apply calibration matrix
             result = self._parse_and_enforce_matrix(raw_json, contract_info['type'])
             result.engine_used = chosen_engine
             result.contract_type = contract_info['type']
@@ -330,7 +299,6 @@ class ClauseAnalyzer:
     # ── LLM Calling Logic ──
 
     def _call_groq(self, contract_text: str) -> str:
-        """Call Groq API with standard system prompt"""
         response = self.groq_client.chat.completions.create(
             model=self.groq_model,
             messages=[
@@ -345,7 +313,6 @@ class ClauseAnalyzer:
         return response.choices[0].message.content
 
     def _call_gemini(self, contract_text: str) -> str:
-        """Call Gemini API with calibrated system prompt"""
         enhanced_prompt = f"{SYSTEM_PROMPT}\n\n{CALIBRATION_ADDENDUM}"
         full_prompt = f"{enhanced_prompt}\n\n{USER_PROMPT_TEMPLATE.format(contract_text=contract_text[:30000])}"
         
@@ -362,6 +329,11 @@ class ClauseAnalyzer:
 
     def _parse_and_enforce_matrix(self, raw: str, contract_type: str) -> AnalysisResult:
         """Parse LLM response and apply deterministic scoring with contract-type calibration"""
-        clean = re.sub(r"   ", "", raw).strip()
-        parsed = json.loads(clean)
-        return self._apply_calibration(parsed, contract_type)
+        # Strip markdown fences if present
+        clean = re.sub(r"^```json\n|```$", "", raw, flags=re.MULTILINE).strip()
+        data = json.loads(clean)
+
+        base_score = int(data.get("score", 0))
+        flagged_clauses_data = data.get("flags", [])
+        
+        # 🛡️ THE DETERMINISTIC PENALTY MATRIX 🛡️
