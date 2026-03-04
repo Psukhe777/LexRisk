@@ -28,7 +28,7 @@ st.set_page_config(
 # ── 2. Local Imports & Config ─────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import ClauseAnalyzer
-from demo_data import DEMOS  
+from demo_data import DEMOS 
 from rate_limiter import get_user_id, check_rate_limit, increment_usage
 
 # Initialize sentence transformer for semantic chunking
