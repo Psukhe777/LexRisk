@@ -107,8 +107,8 @@ class AnalysisResult:
     recommendation: str
     raw_response: str
     disclaimer: str
-    engine_used: str = "groq"  
-    contract_type: str = "Unknown"  
+    engine_used: str = "groq"
+    contract_type: str = "Unknown"
 
 # ── 3. Contract Type Detector ─────────────────────────────────────────────────
 
@@ -221,7 +221,8 @@ class ClauseAnalyzer:
         if self.groq_key:
             try:
                 self.groq_client = Groq(api_key=self.groq_key)
-                self.groq_model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
+                # Updated to newest flagshsip versatile model
+                self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
                 logger.info("✅ Groq engine initialized")
             except Exception as e:
                 logger.warning(f"⚠️ Groq initialization failed: {e}")
@@ -266,6 +267,7 @@ class ClauseAnalyzer:
         else:
             chosen_engine = self.provider
             
+        # Validate chosen engine is available
         if chosen_engine == "groq" and not self.groq_client:
             if self.gemini_model:
                 logger.warning("Groq requested but unavailable, falling back to Gemini")
@@ -317,6 +319,7 @@ class ClauseAnalyzer:
     # ── LLM Calling Logic ──
 
     def _call_groq(self, contract_text: str) -> str:
+        """Call Groq API with standard system prompt"""
         response = self.groq_client.chat.completions.create(
             model=self.groq_model,
             messages=[
@@ -331,6 +334,7 @@ class ClauseAnalyzer:
         return response.choices[0].message.content
 
     def _call_gemini(self, contract_text: str) -> str:
+        """Call Gemini API with calibrated system prompt"""
         enhanced_prompt = f"{SYSTEM_PROMPT}\n\n{CALIBRATION_ADDENDUM}"
         full_prompt = f"{enhanced_prompt}\n\n{USER_PROMPT_TEMPLATE.format(contract_text=contract_text[:30000])}"
         
