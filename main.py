@@ -1,8 +1,7 @@
-
-"""
+""
 main.py — Lexrisk: AI-powered predatory clause scanner
 Run: streamlit run main.py
-Enhanced with real-time data visualization
+Enhanced with real-time data visualization and Dual-Engine Routing
 """
 
 import logging
@@ -380,13 +379,27 @@ if analyze_btn and st.session_state.contract_text.strip():
             # Show animated progress
             show_analysis_progress()
 
-            # API Rerouting Logic
-            api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
-            if not api_key:
-                st.error("Missing GROQ_API_KEY. Please add it to Streamlit Secrets or your .env file.")
-                st.stop()
+            # --- 🧠 DUAL-ENGINE ROUTING LOGIC ---
+            text_length = len(st.session_state.contract_text)
             
-            analyzer = ClauseAnalyzer(api_key=api_key)
+            if text_length > 4500:
+                # Long contract -> Route to Gemini (High Token Limit)
+                api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+                provider_choice = "gemini"
+                if not api_key:
+                    st.error("Missing GEMINI_API_KEY for large contracts. Please add it to Secrets.")
+                    st.stop()
+            else:
+                # Short contract -> Route to Groq (Lightning Fast)
+                api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+                provider_choice = "groq"
+                if not api_key:
+                    st.error("Missing GROQ_API_KEY. Please add it to Secrets.")
+                    st.stop()
+            
+            # Initialize with the dynamically chosen engine
+            analyzer = ClauseAnalyzer(api_key=api_key, provider=provider_choice)
+            # ------------------------------------
             
             result = analyzer.analyze(st.session_state.contract_text)
             
