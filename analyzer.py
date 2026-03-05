@@ -1,3 +1,4 @@
+
 """
 analyzer.py
 Core AI integration — Scans contract text for predatory clauses using 
@@ -27,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 # ── 1. The Expanded "Ruthless Lawyer" System Prompt ───────────────────────────
 
-SYSTEM_PROMPT = """You are LEXRISK, an elite, ruthless corporate lawyer auditing contracts.
-Your sole job is to protect the user from predatory, one-sided, and dangerous legal clauses.
+SYSTEM_PROMPT = """"You are LEXRISK, an elite, ruthless lawyer auditing and scoring contracts and terms of service.
+Your sole job is to protect the user, company, or organization from predatory, one-sided, and dangerous legal documents and contracts 
 
 You are hunting for the following 15 threat vectors:
 1. Binding Arbitration & Class Action Waivers (Stripping the right to sue).
@@ -359,3 +360,85 @@ class ClauseAnalyzer:
         flagged_clauses_data = data.get("flags", [])
         
         # 🛡️ THE DETERMINISTIC PENALTY MATRIX 🛡️
+        # Apply contract-type-specific calibration
+        penalty_scores = {
+            "Arbitration": 15,
+            "IP Rights": 20,
+            "Auto-Renewal": 10,
+            "Gag Clause": 25,
+            "Limitation of Liability": 15,
+            "Unilateral Modification": 20,
+            "Termination": 10,
+            "Indemnification": 15,
+            "Venue": 5,
+            "Data Sharing": 20,
+            "Non-Compete": 25,
+            "Audit Rights": 10,
+            "Penalties": 15,
+            "Survival": 10,
+            "Injunctive Relief": 20
+        }
+        
+        # Calculate deterministic score
+        deterministic_score = 0
+        for clause in flagged_clauses_data:
+            cat = clause.get("cat", "")
+            sev = clause.get("sev", "LOW")
+            
+            # Base penalty
+            base_penalty = penalty_scores.get(cat, 10)
+            
+            # Severity multiplier
+            sev_multiplier = {
+                "LOW": 0.5,
+                "MEDIUM": 1.0,
+                "HIGH": 1.5,
+                "CRITICAL": 2.0
+            }.get(sev, 1.0)
+            
+            deterministic_score += int(base_penalty * sev_multiplier)
+        
+        # Cap at 100
+        deterministic_score = min(deterministic_score, 100)
+        
+        # Blend AI score with deterministic score (60% deterministic, 40% AI)
+        final_score = int(deterministic_score * 0.6 + base_score * 0.4)
+        final_score = min(final_score, 100)
+        
+        # Determine risk level
+        if final_score >= 85:
+            risk_level = "CRITICAL"
+        elif final_score >= 70:
+            risk_level = "HIGH"
+        elif final_score >= 40:
+            risk_level = "MEDIUM"
+        else:
+            risk_level = "LOW"
+        
+        # Parse flagged clauses
+        flagged_clauses = [
+            FlaggedClause(
+                clause_text=c.get("txt", ""),
+                category=c.get("cat", "Unknown"),
+                severity=c.get("sev", "LOW"),
+                plain_english=c.get("desc", ""),
+                red_flag=c.get("red", "")
+            )
+            for c in flagged_clauses_data
+        ]
+        
+        # Get summary and recommendation
+        summary = data.get("sum", "No summary provided.")
+        recommendation = data.get("rec", "NEGOTIATE")
+        
+        disclaimer = "Lexrisk is an AI-powered assistant, not a legal professional. This analysis is for informational purposes only and does not constitute legal advice or an attorney-client relationship."
+        
+        return AnalysisResult(
+            risk_score=final_score,
+            risk_level=risk_level,
+            flagged_clauses=flagged_clauses,
+            summary=summary,
+            recommendation=recommendation,
+            raw_response=raw,
+            disclaimer=disclaimer
+        )
