@@ -1,5 +1,5 @@
 ""
-main.py — Lexrisk: AI-powered predatory clause scanner
+main.py Lexrisk: AI-powered predatory clause scanner
 Run: streamlit run main.py
 Enhanced with real-time data visualization and Dual-Engine Routing
 """
