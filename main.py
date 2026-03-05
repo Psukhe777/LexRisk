@@ -1,5 +1,5 @@
-""
-main.py Lexrisk: AI-powered predatory clause scanner
+"""
+main.py — Lexrisk: AI-powered predatory clause scanner
 Run: streamlit run main.py
 Enhanced with real-time data visualization and Dual-Engine Routing
 """
@@ -59,7 +59,7 @@ st.markdown("""
     /* Hide the footer (Made with Streamlit) */
     footer {visibility: hidden !important;}
     
-    /* 🔴 THE 'HOSTED WITH STREAMLIT' BADGE NUCLEAR OPTION 🔴 */
+    /* --- THE 'HOSTED WITH STREAMLIT' BADGE NUCLEAR OPTION --- */
     [data-testid="viewerBadge"] {display: none !important;}
     div[class^="viewerBadge"] {display: none !important;}
     div[class*="viewerBadge"] {display: none !important;}
@@ -493,5 +493,7 @@ st.markdown("""
     <p><strong>CLAUSE</strong> by Babylon Technologies</p>
     <p>© 2026 Babylon Technologies. Building in public.</p>
     <p><a href="https://babylontech.org" style="color: #c9a84c;">Back to Babylon Studio</a></p>
+</div>
+""", unsafe_allow_html=True)
 </div>
 """, unsafe_allow_html=True)
