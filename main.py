@@ -1,6 +1,7 @@
+
 """
-app.py — Lexrisk: AI-powered predatory clause scanner
-Run: streamlit run app.py
+main.py — Lexrisk: AI-powered predatory clause scanner
+Run: streamlit run main.py
 Enhanced with real-time data visualization
 """
 
@@ -28,7 +29,7 @@ st.set_page_config(
 # ── 2. Local Imports & Config ─────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
 from analyzer import ClauseAnalyzer
-from demo_data import DEMOS 
+from demo_data import DEMOS  
 from rate_limiter import get_user_id, check_rate_limit, increment_usage
 
 # Initialize sentence transformer for semantic chunking
@@ -208,6 +209,7 @@ def create_risk_distribution_pie(clauses):
     values = [v for v in severity_counts.values() if v > 0]
     colors = {'LOW': '#44cc44', 'MEDIUM': '#ffcc00', 'HIGH': '#ff8800', 'CRITICAL': '#ff4444'}
     color_map = [colors[label] for label in labels]
+    
     fig = go.Figure(data=[go.Pie(
         labels=labels,
         values=values,
