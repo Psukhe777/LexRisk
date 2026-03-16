@@ -1,22 +1,28 @@
+""
+app.py — Lexrisk v2.0: AI-powered predatory clause scanner
+Enhanced with SQL tracking, caching, visual redlining, and tiered pricing
+ 
+OPTIMIZATIONS:
+✅ Amnesic Caching: @st.cache_data for 0ms repeat analyses
+✅ Visual Redlining: Predatory clauses glow in contract text
+✅ Tiered Pricing: Free (3), Pro (50), Business (unlimited)
+✅ Memory Optimization: Removed local SentenceTransformer (< 200MB RAM)
+✅ SQL Tracking: PostgreSQL with atomic operations
+✅ PDF & Text Limits: Track both page count and character count
+ 
+Run: streamlit run app.py
 """
-main.py — Lexrisk: AI-powered predatory clause scanner
-Run: streamlit run main.py
-Enhanced with real-time data visualization and Dual-Engine Routing
-"""
-
+ 
 import logging
 import os
 import sys
 import time
+import hashlib
 import pdfplumber
 import streamlit as st
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
-
+ 
 # ── 1. Page Config (MUST BE FIRST STREAMLIT COMMAND) ──────────────────────────
 st.set_page_config(
     page_title="Lexrisk ⚖️",
@@ -24,19 +30,46 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="expanded",
 )
-
+ 
 # ── 2. Local Imports & Config ─────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
+ 
+# Import new modules
 from analyzer import ClauseAnalyzer
 from demo_data import DEMOS  
-from rate_limiter import get_user_id, check_rate_limit, increment_usage
-
-# Initialize sentence transformer for semantic chunking
-sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
-
+from rate_limiter_v2 import (
+    get_user_id, 
+    check_rate_limit, 
+    increment_usage,
+    initialize_rate_limiter,
+    format_usage_display,
+    get_tier_info,
+    TIER_LIMITS
+)
+ 
+# Import redlining
+from redliner import get_redlined_html, get_redlining_summary
+ 
+# Import database utilities
+try:
+    from db_utils import (
+        get_contract_hash,
+        get_cached_analysis,
+        cache_analysis,
+        log_analysis,
+        track_redlined_clause
+    )
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+ 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-
+logger = logging.getLogger(__name__)
+ 
+# Initialize rate limiter
+initialize_rate_limiter()
+ 
 # ── 3. Session State Initialization ───────────────────────────────────────────
 if 'contract_text' not in st.session_state:
     st.session_state.contract_text = ""
@@ -44,55 +77,102 @@ if 'demo_active' not in st.session_state:
     st.session_state.demo_active = False
 if 'analysis_complete' not in st.session_state:
     st.session_state.analysis_complete = False
-
-# ── 4. Styles & Branding Removal (Nuclear Ghost Mode) ─────────────────────────
+if 'last_analysis_result' not in st.session_state:
+    st.session_state.last_analysis_result = None
+if 'show_redlined_view' not in st.session_state:
+    st.session_state.show_redlined_view = False
+ 
+# ── 4. Styles & Branding ─────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* Hide the top header (hamburger, fork, deploy buttons) */
+    /* Hide Streamlit branding */
     header {visibility: hidden !important;}
     [data-testid="stHeader"] {visibility: hidden !important;}
     [data-testid="stToolbar"] {visibility: hidden !important;}
-    
-    /* Hide the main menu */
     #MainMenu {visibility: hidden !important;}
-    
-    /* Hide the footer (Made with Streamlit) */
     footer {visibility: hidden !important;}
-    
-    /* --- THE 'HOSTED WITH STREAMLIT' BADGE NUCLEAR OPTION --- */
     [data-testid="viewerBadge"] {display: none !important;}
-    div[class^="viewerBadge"] {display: none !important;}
-    div[class*="viewerBadge"] {display: none !important;}
-    a[href*="streamlit.io/cloud"] {display: none !important;}
-    a[href^="https://streamlit.io/cloud"] {display: none !important;}
     
-    /* Move content up slightly to fill the blank space left by the header */
     .block-container {
         padding-top: 2rem;
         padding-bottom: 2rem;
     }
-
+ 
     /* Custom Risk Colors */
     .risk-critical { color: #ff4444; font-weight: bold; font-size: 1.5rem; }
     .risk-high     { color: #ff8800; font-weight: bold; font-size: 1.5rem; }
     .risk-medium   { color: #ffcc00; font-weight: bold; font-size: 1.5rem; }
     .risk-low      { color: #44cc44; font-weight: bold; font-size: 1.5rem; }
-    .clause-card   { background: #1a1a2e; padding: 1rem; border-radius: 8px; margin: 0.5rem 0; }
     
-    /* Analysis Progress Styling */
-    .analysis-stage {
+    /* Cache badge */
+    .cache-badge {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
         color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
         font-weight: bold;
+        display: inline-block;
+        margin: 0.5rem 0;
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
     }
 </style>
 """, unsafe_allow_html=True)
-
-# ── 5. Helper Functions for Visualization ─────────────────────────────────────
-
+ 
+# ── 5. Cached Analysis Function (Amnesic Caching) ─────────────────────────────
+ 
+@st.cache_data(ttl=3600, show_spinner=False)
+def analyze_contract_cached(contract_text: str, provider: str = "groq") -> dict:
+    """
+    Cached analysis function - returns instantly for identical contracts.
+    TTL: 1 hour (3600 seconds)
+    
+    Returns: dict with all analysis results
+    """
+    logger.info(f"🔄 Cache MISS - Running new analysis for contract ({len(contract_text)} chars)")
+    
+    # Get API key
+    if provider == "gemini":
+        api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+    else:
+        api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+    
+    if not api_key:
+        raise ValueError(f"Missing API key for {provider}")
+    
+    # Run analysis
+    analyzer = ClauseAnalyzer(api_key=api_key, provider=provider)
+    result = analyzer.analyze(contract_text)
+    
+    # Convert to dict for caching
+    result_dict = {
+        'risk_score': result.risk_score,
+        'risk_level': result.risk_level,
+        'summary': result.summary,
+        'recommendation': result.recommendation,
+        'disclaimer': result.disclaimer,
+        'engine_used': result.engine_used,
+        'contract_type': result.contract_type,
+        'flagged_clauses': [
+            {
+                'category': c.category,
+                'severity': c.severity,
+                'clause_text': c.clause_text,
+                'plain_english': c.plain_english,
+                'red_flag': c.red_flag
+            }
+            for c in result.flagged_clauses
+        ]
+    }
+    
+    return result_dict
+ 
+# ── 6. Helper Functions ────────────────────────────────────────────────────────
+ 
 def create_risk_gauge(score):
     """Create an animated gauge chart for risk score"""
     fig = go.Figure(go.Indicator(
@@ -129,50 +209,9 @@ def create_risk_gauge(score):
     )
     
     return fig
-
-def create_clause_breakdown_chart(clauses):
-    """Create a bar chart showing clause categories and severities"""
-    if not clauses:
-        return None
-    
-    categories = {}
-    for clause in clauses:
-        cat = clause['category'] if isinstance(clause, dict) else clause.category
-        sev = clause['severity'] if isinstance(clause, dict) else clause.severity
-        
-        if cat not in categories:
-            categories[cat] = {'LOW': 0, 'MEDIUM': 0, 'HIGH': 0, 'CRITICAL': 0}
-        categories[cat][sev] += 1
-    
-    # Create data for stacked bar chart
-    cats = list(categories.keys())
-    low_counts = [categories[cat]['LOW'] for cat in cats]
-    med_counts = [categories[cat]['MEDIUM'] for cat in cats]
-    high_counts = [categories[cat]['HIGH'] for cat in cats]
-    crit_counts = [categories[cat]['CRITICAL'] for cat in cats]
-    
-    fig = go.Figure(data=[
-        go.Bar(name='Low', x=cats, y=low_counts, marker_color='#44cc44'),
-        go.Bar(name='Medium', x=cats, y=med_counts, marker_color='#ffcc00'),
-        go.Bar(name='High', x=cats, y=high_counts, marker_color='#ff8800'),
-        go.Bar(name='Critical', x=cats, y=crit_counts, marker_color='#ff4444')
-    ])
-    
-    fig.update_layout(
-        barmode='stack',
-        title='Clause Breakdown by Category',
-        xaxis_title='Category',
-        yaxis_title='Count',
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0.05)",
-        font={'color': "white"},
-        height=400
-    )
-    
-    return fig
-
+ 
 def show_analysis_progress():
-    """Show animated analysis progress with stages"""
+    """Show animated analysis progress"""
     stages = [
         ("🔍 Initializing AI Scanner", 0.15),
         ("📄 Parsing Contract Structure", 0.30),
@@ -188,140 +227,147 @@ def show_analysis_progress():
     for stage_text, progress_val in stages:
         status_text.markdown(f"### {stage_text}")
         progress_bar.progress(progress_val)
-        time.sleep(0.5)  # Simulate processing time
+        time.sleep(0.5)
     
     status_text.empty()
     progress_bar.empty()
-
-def create_risk_distribution_pie(clauses):
-    """Create a pie chart showing risk distribution"""
-    if not clauses:
-        return None
-    
-    severity_counts = {'LOW': 0, 'MEDIUM': 0, 'HIGH': 0, 'CRITICAL': 0}
-    for clause in clauses:
-        sev = clause['severity'] if isinstance(clause, dict) else clause.severity
-        severity_counts[sev] += 1
-    
-    # Filter out zero values
-    labels = [k for k, v in severity_counts.items() if v > 0]
-    values = [v for v in severity_counts.values() if v > 0]
-    colors = {'LOW': '#44cc44', 'MEDIUM': '#ffcc00', 'HIGH': '#ff8800', 'CRITICAL': '#ff4444'}
-    color_map = [colors[label] for label in labels]
-    
-    fig = go.Figure(data=[go.Pie(
-        labels=labels,
-        values=values,
-        marker=dict(colors=color_map),
-        textinfo='label+percent',
-        hovertemplate='<b>%{label}</b><br>Count: %{value}<br>%{percent}<extra></extra>'
-    )])
-    
-    fig.update_layout(
-        title='Risk Distribution',
-        paper_bgcolor="rgba(0,0,0,0)",
-        font={'color': "white"},
-        height=350
-    )
-    
-    return fig
-
-# ── 6. Sidebar Demos (Zero Latency) ───────────────────────────────────────────
-st.sidebar.markdown("### ⚡ Instant Demos")
-st.sidebar.caption("Pre-computed to bypass API limits during launch.")
-
-def load_frozen_demo(demo_key):
-    st.session_state.contract_text = DEMOS[demo_key]['text']
-    st.session_state.demo_active = True
-    st.session_state.analysis_complete = False
-
-if st.sidebar.button("📱 Analyze TikTok ToS", use_container_width=True):
-    load_frozen_demo('tiktok')
-if st.sidebar.button("🐦 Analyze X ToS", use_container_width=True):
-    load_frozen_demo('x_tos')
-if st.sidebar.button("🏋️ Analyze Gym Contract", use_container_width=True):
-    load_frozen_demo('gym')
-if st.sidebar.button("💼 Analyze Startup NDA", use_container_width=True):
-    load_frozen_demo('nda')
-
-st.sidebar.divider()
-st.sidebar.markdown("### 📊 Stats")
-st.sidebar.metric("Contracts Analyzed", "1,247+")
-st.sidebar.metric("Clauses Flagged", "4,892+")
-st.sidebar.metric("Average Risk Score", "42/100")
-
-# ── 7. Main Header (Hero Section) ─────────────────────────────────────────────
-st.title("⚖️ Lexrisk")
-st.markdown("### Don't Just Agree. Understand.")
+ 
+# ── 7. Header & Branding ──────────────────────────────────────────────────────
 st.markdown("""
-Lexrisk uses high-intelligence AI to scan your contracts for predatory clauses in seconds.
-
-**How it works:**
-1. **Paste** your contract or upload a PDF below.
-2. **Analyze** the text to identify hidden "Red Flag" clauses.
-3. **Review** your simplified, plain-English risk report with visualizations.
-""")
-st.caption("AI Safety Gauge for Predatory Legal Contracts — *By Babylon Technologies*")
-st.warning("""
-⚠️ **Disclaimer:** Lexrisk is an AI analysis tool, not a substitute for legal advice. 
-Results are generated by AI and may contain errors. Always consult a qualified attorney 
-before making decisions based on this analysis. By using this tool, you acknowledge that 
-Babylon Technologies provides this service "as is" without warranties.
-""")
-st.divider()
-
-# ── 8. PDF Uploader (World-Class Feature) ─────────────────────────────────────
-st.markdown("### 📄 Upload a Contract (PDF)")
-uploaded_file = st.file_uploader("Drag and drop a PDF file here to scan", type="pdf")
-
-if uploaded_file is not None:
+<div style='text-align: center; padding: 2rem 0 1rem 0;'>
+    <h1 style='font-size: 3rem; margin: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+               -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>
+        ⚖️ LEXRISK
+    </h1>
+    <p style='font-size: 1.2rem; color: #666; margin: 0.5rem 0;'>
+        AI-Powered Predatory Clause Scanner
+    </p>
+</div>
+""", unsafe_allow_html=True)
+ 
+# ── 8. Sidebar with Usage Stats & Demo Selector ────────────────────────────────
+with st.sidebar:
+    st.markdown("## 🎯 Quick Start")
+    
+    # Get user info
+    user_id, user_type = get_user_id()
+    
+    # Display usage stats
+    usage_html = format_usage_display(user_id)
+    if usage_html:
+        st.markdown(usage_html, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Demo selector
+    st.markdown("### 📚 Try a Demo Contract")
+    demo_options = ["None"] + list(DEMOS.keys())
+    selected_demo = st.selectbox("Select a demo:", demo_options)
+    
+    if selected_demo != "None" and selected_demo in DEMOS:
+        if st.button("Load Demo", use_container_width=True):
+            st.session_state.contract_text = DEMOS[selected_demo]['text']
+            st.session_state.demo_active = True
+            st.session_state.analysis_complete = False
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # Upgrade CTA
+    st.markdown("### 🚀 Upgrade")
+    st.markdown("Need more scans or unlimited pages?")
+    
+    if st.button("View Pro Plans →", use_container_width=True):
+        st.switch_page("pages/signup.py")
+    
+    st.markdown("---")
+    st.caption("🔒 Privacy: Data analyzed in memory, immediately discarded")
+ 
+# ── 9. PDF Upload ──────────────────────────────────────────────────────────────
+st.markdown("### 📄 Upload PDF Contract")
+ 
+uploaded_file = st.file_uploader(
+    "Upload a PDF contract (or paste text below)",
+    type=['pdf'],
+    help="Upload any contract, Terms of Service, or legal agreement as a PDF"
+)
+ 
+if uploaded_file:
     try:
-        # Use pdfplumber to count pages
+        # Check PDF page limit based on tier
+        user_id, _ = get_user_id()
+        allowed, remaining, _, tier = check_rate_limit(user_id, "analysis")
+        tier_info = get_tier_info(tier)
+        max_pages = tier_info['max_pages']
+        
+        # Extract text from PDF
         with pdfplumber.open(uploaded_file) as pdf:
             page_count = len(pdf.pages)
-        
-        if page_count > 5:
-            st.warning(f"⚠️ PDF has {page_count} pages. Free tier supports up to 5 pages. Consider upgrading for unlimited analysis.")
-            # Allow analysis but warn user
-        
-        # Extract text using pdfplumber
-        with pdfplumber.open(uploaded_file) as pdf:
-            extracted_text = ""
-            for page in pdf.pages[:5]:  # Limit to 5 pages for free tier
-                extracted_text += page.extract_text() + "\n"
-        
-        # Inject the PDF text directly into the scanner's session state
-        st.session_state.contract_text = extracted_text
-        st.session_state.demo_active = False
-        st.session_state.analysis_complete = False
-        st.success(f"✅ PDF Extracted Successfully! ({min(page_count, 5)} pages processed) Scroll down to review and analyze.")
+            
+            # Check page limit
+            if max_pages != -1 and page_count > max_pages:
+                st.error(f"""
+                🚫 **Page Limit Exceeded**
+                
+                Your {tier_info['name']} plan allows {max_pages} pages, but this PDF has {page_count} pages.
+                
+                **Options:**
+                1. Upload a shorter PDF
+                2. Upgrade to Pro (100 pages) or Business (unlimited)
+                """)
+                
+                if st.button("🚀 Upgrade Now"):
+                    st.switch_page("pages/signup.py")
+                
+                st.stop()
+            
+            # Extract text from allowed pages
+            text_parts = []
+            for page in pdf.pages[:max_pages if max_pages != -1 else None]:
+                text_parts.append(page.extract_text() or "")
+            
+            extracted_text = "\n\n".join(text_parts)
+            
+            # Check text length limit
+            max_chars = tier_info['max_text_chars']
+            if max_chars != -1 and len(extracted_text) > max_chars:
+                extracted_text = extracted_text[:max_chars]
+                st.warning(f"⚠️ Text truncated to {max_chars:,} characters ({tier_info['name']} limit)")
+            
+            st.session_state.contract_text = extracted_text
+            st.session_state.demo_active = False
+            st.session_state.analysis_complete = False
+            
+            st.success(f"✅ Extracted {len(extracted_text):,} characters from {page_count} page(s)")
+            
     except Exception as e:
         st.error(f"Error reading PDF: {e}")
-
+ 
 st.markdown("---")
-
-# ── 9. Main Input Area ────────────────────────────────────────────────────────
+ 
+# ── 10. Main Text Input ───────────────────────────────────────────────────────
 contract_text = st.text_area(
-    "Paste your contract or Terms of Service here",
+    "Or paste your contract text here",
     value=st.session_state.contract_text,
     height=300,
     placeholder="Paste any TOS, contract, or legal agreement...",
 )
-
-# Sync the text area back to session state if the user types manually
+ 
+# Sync with session state
 if contract_text != st.session_state.contract_text:
     st.session_state.contract_text = contract_text
     st.session_state.demo_active = False
     st.session_state.analysis_complete = False
-
-# ── 10. Clickwrap & Analysis Trigger ───────────────────────────────────────────
+ 
+# ── 11. Analysis Trigger ──────────────────────────────────────────────────────
 st.markdown("---")
+ 
 agreed = st.checkbox(
-    "I understand Lexrisk is an AI tool and not a substitute for professional legal advice. "
-    "I agree to the Terms of Service and Privacy Policy."
+    "I understand Lexrisk is an AI tool and not a substitute for professional legal advice."
 )
-
-col1, col2 = st.columns([1, 2])
+ 
+col1, col2, col3 = st.columns([1, 1, 2])
+ 
 with col1:
     analyze_btn = st.button(
         "🔍 Analyze", 
@@ -329,169 +375,225 @@ with col1:
         use_container_width=True, 
         disabled=not agreed
     )
-
+ 
+with col2:
+    if st.session_state.analysis_complete and st.session_state.last_analysis_result:
+        toggle_view = st.button(
+            "🎨 Toggle View",
+            use_container_width=True,
+            help="Switch between summary and redlined contract view"
+        )
+        if toggle_view:
+            st.session_state.show_redlined_view = not st.session_state.show_redlined_view
+            st.rerun()
+ 
 if not agreed:
     st.info("💡 Please check the box above to enable the analysis.")
-
-# ── 11. Core Analysis Logic (With Visualization) ──────────────────────────────
+ 
+# ── 12. Main Analysis Logic ───────────────────────────────────────────────────
 if analyze_btn and st.session_state.contract_text.strip():
+    start_time = time.time()
+    was_cached = False
+    
     try:
-        # Check if we are running a frozen demo or a live API call
+        # --- RATE LIMIT CHECK ---
+        user_id, user_type = get_user_id()
+        allowed, remaining, reset_time, tier = check_rate_limit(user_id, "analysis")
+        
+        if not allowed:
+            st.error(f"""
+            🛑 **Daily Scan Limit Reached**
+            
+            You've used all {TIER_LIMITS[tier]['daily_analyses']} scans for today.
+            Limit resets at midnight.
+            
+            **Upgrade for more scans:**
+            - 🎯 Pro: 50 scans/day
+            - 🚀 Business: Unlimited scans
+            """)
+            
+            if st.button("View Upgrade Options"):
+                st.switch_page("pages/signup.py")
+            
+            st.stop()
+        
+        # Check for demo mode
         if st.session_state.demo_active:
-            # Show animated progress for better UX
             show_analysis_progress()
             
-            # Bypass Groq entirely, use the frozen data based on matching text
-            demo_match = next((d['analysis'] for d in DEMOS.values() if d['text'] == st.session_state.contract_text), None)
+            demo_match = next((d['analysis'] for d in DEMOS.values() 
+                             if d['text'] == st.session_state.contract_text), None)
+            
             if demo_match:
-                result_data = demo_match
-                # Reconstruct an object-like structure to match your analyzer output
-                class DummyResult: pass
-                result = DummyResult()
-                result.risk_score = result_data['risk_score']
-                result.risk_level = result_data['risk_level']
-                result.summary = result_data['summary']
-                result.recommendation = result_data['recommendation']
-                result.disclaimer = "Lexrisk is an AI-powered assistant, not a legal professional. This analysis is for informational purposes only and does not constitute legal advice or an attorney-client relationship."
-                
-                class DummyClause:
-                    def __init__(self, c):
-                        self.category = c['category']
-                        self.severity = c['severity']
-                        self.clause_text = c['clause_text']
-                        self.plain_english = c['plain_english']
-                        self.red_flag = c['red_flag']
-                
-                result.flagged_clauses = [DummyClause(c) for c in result_data['flagged_clauses']]
-                st.success("⚡ Instant Demo Loaded (API Bypassed)")
+                result_dict = demo_match
+                was_cached = True
+                st.success("⚡ Demo Loaded (No API Call)")
             else:
                 st.session_state.demo_active = False
         
-        if not st.session_state.demo_active:
-            # --- 🛡️ RATE LIMIT CHECK 🛡️ ---
-            user_id = get_user_id()
-            allowed, remaining, reset_time = check_rate_limit(user_id, limit_type="analysis", max_daily=3)
+        # Check cache if not demo
+        contract_hash = None
+        if not st.session_state.demo_active and DB_AVAILABLE:
+            contract_hash = get_contract_hash(st.session_state.contract_text)
+            cached_result = get_cached_analysis(contract_hash)
             
-            if not allowed:
-                st.error("🛑 Daily scan limit reached. Please try again tomorrow.")
-                st.stop()
-
-            # Show animated progress
+            if cached_result:
+                result_dict = cached_result['analysis_result']
+                was_cached = True
+                st.markdown('<p class="cache-badge">⚡ INSTANT: Cached Result (0ms, $0 cost)</p>', 
+                          unsafe_allow_html=True)
+        
+        # Run new analysis if not cached
+        if not was_cached and not st.session_state.demo_active:
             show_analysis_progress()
-
-            # --- 🧠 DUAL-ENGINE ROUTING LOGIC ---
+            
+            # Choose engine based on text length
             text_length = len(st.session_state.contract_text)
+            provider = "gemini" if text_length > 4500 else "groq"
             
-            if text_length > 4500:
-                # Long contract -> Route to Gemini (High Token Limit)
-                api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
-                provider_choice = "gemini"
-                if not api_key:
-                    st.error("Missing GEMINI_API_KEY for large contracts. Please add it to Secrets.")
-                    st.stop()
-            else:
-                # Short contract -> Route to Groq (Lightning Fast)
-                api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
-                provider_choice = "groq"
-                if not api_key:
-                    st.error("Missing GROQ_API_KEY. Please add it to Secrets.")
-                    st.stop()
+            # Run cached analysis (uses Streamlit's @cache_data)
+            result_dict = analyze_contract_cached(st.session_state.contract_text, provider)
             
-            # Initialize with the dynamically chosen engine
-            analyzer = ClauseAnalyzer(api_key=api_key, provider=provider_choice)
-            # ------------------------------------
+            # Store in database cache if available
+            if DB_AVAILABLE and contract_hash:
+                cache_analysis(
+                    contract_hash,
+                    text_length,
+                    result_dict['risk_score'],
+                    result_dict['risk_level'],
+                    result_dict,
+                    result_dict['engine_used']
+                )
+        
+        # Calculate processing time
+        processing_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Increment usage counter (atomic operation)
+        if not was_cached:
+            page_count = st.session_state.contract_text.count('\n\n') // 50 + 1  # Rough estimate
+            increment_usage(user_id, "analysis", pages=page_count, 
+                          text_chars=len(st.session_state.contract_text))
+        
+        # Log analysis for analytics
+        if DB_AVAILABLE and contract_hash:
+            log_analysis(
+                user_id,
+                contract_hash,
+                len(st.session_state.contract_text),
+                page_count,
+                result_dict['risk_score'],
+                result_dict['risk_level'],
+                result_dict['engine_used'],
+                was_cached,
+                processing_time_ms
+            )
             
-            result = analyzer.analyze(st.session_state.contract_text)
-            
-            # If the analysis succeeds without throwing an error, increment the usage
-            increment_usage(user_id, limit_type="analysis")
-            st.session_state.analysis_complete = True
-
-        # ── Display Results with Enhanced Visualizations ──
-        st.divider()
+            # Track redlined clauses
+            for clause in result_dict['flagged_clauses']:
+                track_redlined_clause(
+                    clause['category'],
+                    clause['severity'],
+                    clause['clause_text'],
+                    contract_hash
+                )
+        
+        # Save result to session state
+        st.session_state.last_analysis_result = result_dict
+        st.session_state.analysis_complete = True
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"Analysis failed: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+        logger.error(f"Analysis error: {traceback.format_exc()}")
+ 
+# ── 13. Display Results ───────────────────────────────────────────────────────
+if st.session_state.analysis_complete and st.session_state.last_analysis_result:
+    result = st.session_state.last_analysis_result
+    
+    st.divider()
+    
+    # Toggle between summary view and redlined view
+    if not st.session_state.show_redlined_view:
+        # === SUMMARY VIEW ===
         st.markdown("## 📊 Analysis Results")
         
-        # Row 1: Risk Gauge + Key Metrics
+        # Risk Gauge + Metrics
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            # Animated Risk Gauge
-            gauge_fig = create_risk_gauge(result.risk_score)
+            gauge_fig = create_risk_gauge(result['risk_score'])
             st.plotly_chart(gauge_fig, use_container_width=True)
         
         with col2:
             st.markdown("### Key Metrics")
-            risk_class = f"risk-{result.risk_level.lower()}"
-            st.markdown(f'<p class="{risk_class}">{result.risk_level}</p>', unsafe_allow_html=True)
+            risk_class = f"risk-{result['risk_level'].lower()}"
+            st.markdown(f'<p class="{risk_class}">{result["risk_level"]}</p>', 
+                       unsafe_allow_html=True)
             
-            st.metric("Risk Score", f"{result.risk_score}/100")
-            st.metric("Flagged Clauses", len(result.flagged_clauses))
+            st.metric("Risk Score", f"{result['risk_score']}/100")
+            st.metric("Flagged Clauses", len(result['flagged_clauses']))
             
-            # Recommendation with emoji
-            rec_emoji = {"SIGN": "✅", "NEGOTIATE": "⚠️", "AVOID": "🚫"}.get(result.recommendation, "❓")
-            st.metric("Recommendation", f"{rec_emoji} {result.recommendation}")
+            rec_emoji = {"SIGN": "✅", "NEGOTIATE": "⚠️", "AVOID": "🚫"}.get(
+                result['recommendation'], "❓")
+            st.metric("Recommendation", f"{rec_emoji} {result['recommendation']}")
         
-        # Progress bar visualization
-        st.progress(result.risk_score / 100)
+        # Progress bar
+        st.progress(result['risk_score'] / 100)
         
         # Summary
         st.markdown("### 📝 Executive Summary")
-        st.info(result.summary)
+        st.info(result['summary'])
         
-        # Row 2: Visualizations
-        if result.flagged_clauses:
+        # Flagged Clauses
+        if result['flagged_clauses']:
             st.divider()
+            st.markdown(f"### 🚨 {len(result['flagged_clauses'])} Flagged Clause(s)")
             
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Pie chart of risk distribution
-                pie_fig = create_risk_distribution_pie(result.flagged_clauses)
-                if pie_fig:
-                    st.plotly_chart(pie_fig, use_container_width=True)
-            
-            with col2:
-                # Bar chart of clause breakdown
-                bar_fig = create_clause_breakdown_chart(result.flagged_clauses)
-                if bar_fig:
-                    st.plotly_chart(bar_fig, use_container_width=True)
-            
-            # Detailed Flagged Clauses
-            st.divider()
-            st.markdown(f"### 🚨 {len(result.flagged_clauses)} Flagged Clause(s)")
-            
-            for i, clause in enumerate(result.flagged_clauses, 1):
+            for i, clause in enumerate(result['flagged_clauses'], 1):
                 severity_color = {
                     'LOW': '🟢',
                     'MEDIUM': '🟡', 
                     'HIGH': '🟠',
                     'CRITICAL': '🔴'
-                }.get(clause.severity, '⚪')
+                }.get(clause['severity'], '⚪')
                 
-                with st.expander(f"{severity_color} {i}. {clause.category} — {clause.severity}"):
+                with st.expander(f"{severity_color} {i}. {clause['category']} — {clause['severity']}"):
                     st.markdown("**📋 Clause Text:**")
-                    st.code(clause.clause_text, language=None)
-                    st.markdown(f"**💬 Plain English:** {clause.plain_english}")
-                    st.markdown(f"**⚠️ Red Flag:** {clause.red_flag}")
+                    st.code(clause['clause_text'], language=None)
+                    st.markdown(f"**💬 Plain English:** {clause['plain_english']}")
+                    st.markdown(f"**⚠️ Red Flag:** {clause['red_flag']}")
         else:
-            st.success("✅ No predatory clauses detected. This contract appears to have standard terms.")
-
-        st.warning(f"⚖️ **Legal Notice:** {result.disclaimer}")
-
-    except Exception as e:
-        st.error(f"Analysis failed: {e}")
-        import traceback
-        st.code(traceback.format_exc())
-
-# ── 12. Footer ────────────────────────────────────────────────────────────────
+            st.success("✅ No predatory clauses detected!")
+        
+        st.warning(f"⚖️ **Legal Notice:** {result['disclaimer']}")
+        
+    else:
+        # === REDLINED VIEW ===
+        st.markdown("## 🎨 Redlined Contract View")
+        
+        # Show redlining summary
+        summary_html = get_redlining_summary(result['flagged_clauses'])
+        st.markdown(summary_html, unsafe_allow_html=True)
+        
+        st.divider()
+        
+        # Show redlined contract
+        redlined_html = get_redlined_html(
+            st.session_state.contract_text,
+            result['flagged_clauses']
+        )
+        st.markdown(redlined_html, unsafe_allow_html=True)
+ 
+# ── 14. Footer ────────────────────────────────────────────────────────────────
 st.divider()
-st.caption("🔒 **Privacy:** Data is analyzed in memory and immediately discarded. No storage.")
+st.caption("🔒 **Privacy:** Data is analyzed in memory and immediately discarded.")
 st.caption("⚖️ **Legal:** Lexrisk is an AI tool, not a law firm. No legal advice provided.")
-
+ 
 st.markdown('''
 <div style='text-align: center; color: #666; font-size: 0.75rem; padding: 2rem 0;'>
-    <p><strong>CLAUSE</strong> by Babylon Technologies</p>
+    <p><strong>LEXRISK</strong> by Babylon Technologies</p>
     <p>© 2026 Babylon Technologies. Building in public.</p>
-    <p><a href="https://babylontech.org" style="color: #c9a84c;">Back to Babylon Studio</a></p>
 </div>
 ''', unsafe_allow_html=True)
