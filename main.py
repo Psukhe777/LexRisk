@@ -1,17 +1,4 @@
-""
-app.py — Lexrisk v2.0: AI-powered predatory clause scanner
-Enhanced with SQL tracking, caching, visual redlining, and tiered pricing
- 
-OPTIMIZATIONS:
-✅ Amnesic Caching: @st.cache_data for 0ms repeat analyses
-✅ Visual Redlining: Predatory clauses glow in contract text
-✅ Tiered Pricing: Free (3), Pro (50), Business (unlimited)
-✅ Memory Optimization: Removed local SentenceTransformer (< 200MB RAM)
-✅ SQL Tracking: PostgreSQL with atomic operations
-✅ PDF & Text Limits: Track both page count and character count
- 
-Run: streamlit run app.py
-"""
+
  
 import logging
 import os
