@@ -1,7 +1,6 @@
 
 
 
- 
 import logging
 import os
 import sys
@@ -27,13 +26,56 @@ load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
  
-# Import new modules with error handling
+# Import new modules with DETAILED error handling
 try:
     from analyzer import ClauseAnalyzer
     ANALYZER_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"analyzer.py not found: {e}")
+    logger.info("✅ analyzer.py loaded successfully")
+except SyntaxError as e:
+    logger.error(f"❌ SYNTAX ERROR in analyzer.py at line {e.lineno}: {e.msg}")
     ANALYZER_AVAILABLE = False
+    st.error(f"""
+    **SYNTAX ERROR in analyzer.py**
+    
+    Line {e.lineno}: {e.msg}
+    
+    Please check your analyzer.py file for:
+    - Missing quotes or brackets
+    - Incorrect indentation
+    - Invalid Python syntax
+    
+    Error details: {e.text}
+    """)
+    st.stop()
+except ImportError as e:
+    logger.error(f"❌ IMPORT ERROR: {e}")
+    ANALYZER_AVAILABLE = False
+    st.error(f"""
+    **Cannot import analyzer.py**
+    
+    Error: {e}
+    
+    Possible causes:
+    1. File is missing from repository
+    2. File has a dependency error
+    3. Required package is missing
+    
+    Check that analyzer.py exists and all packages in requirements.txt are installed.
+    """)
+    st.stop()
+except Exception as e:
+    logger.error(f"❌ UNKNOWN ERROR loading analyzer.py: {e}")
+    import traceback
+    ANALYZER_AVAILABLE = False
+    st.error(f"""
+    **Error loading analyzer.py**
+    
+    {e}
+    
+    Full traceback:
+    """)
+    st.code(traceback.format_exc())
+    st.stop()
  
 try:
     from demo_data import DEMOS  
@@ -279,11 +321,6 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
- 
-# Show warning if modules are missing
-if not ANALYZER_AVAILABLE:
-    st.error("⚠️ **Analyzer module not available.** Please ensure `analyzer.py` is in your deployment.")
-    st.stop()
  
 # ── 8. Sidebar with Usage Stats & Demo Selector ────────────────────────────────
 with st.sidebar:
@@ -609,8 +646,8 @@ if st.session_state.analysis_complete and st.session_state.last_analysis_result:
         else:
             st.success("✅ No predatory clauses detected!")
         
-            legal_text = result.get('disclaimer', "This analysis is for informational purposes only.")
-            st.warning(f"⚖️ **Legal Notice:** {legal_text}")
+        legal_text = result.get('disclaimer', "This analysis is for informational purposes only.")
+        st.warning(f"⚖️ **Legal Notice:** {legal_text}")
         
     else:
         # === REDLINED VIEW ===
@@ -639,5 +676,4 @@ st.markdown('''
     <p><strong>LEXRISK</strong> by Babylon Technologies</p>
     <p>© 2026 Babylon Technologies. Building in public.</p>
 </div>
-''', unsafe_allow_html=True)
- 
+''', (unsafe_allow_html=True)
