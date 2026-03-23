@@ -18,7 +18,10 @@ st.set_page_config(
  
 # ── 2. Local Imports & Config ─────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
- 
+ # TEMPORARY DEBUGGING
+st.write("Has OpenAI Key?", "OPENAI_API_KEY" in st.secrets)
+st.write("Has Groq Key?", "GROQ_API_KEY" in st.secrets)
+st.stop() # Stops the rest of the app from running
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
