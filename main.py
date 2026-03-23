@@ -609,7 +609,8 @@ if st.session_state.analysis_complete and st.session_state.last_analysis_result:
         else:
             st.success("✅ No predatory clauses detected!")
         
-        st.warning(f"⚖️ **Legal Notice:** {result['disclaimer']}")
+            legal_text = result.get('disclaimer', "This analysis is for informational purposes only.")
+            st.warning(f"⚖️ **Legal Notice:** {legal_text}")
         
     else:
         # === REDLINED VIEW ===
