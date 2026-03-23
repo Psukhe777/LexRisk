@@ -458,12 +458,14 @@ class ClauseAnalyzer:
         ]
         
         # Get summary and recommendation
-        summary = data.get("sum", "No summary provided.")
-        recommendation = data.get("rec", "NEGOTIATE")
-        
-        disclaimer = "Lexrisk is an AI-powered assistant, not a legal professional. This analysis is for informational purposes only and does not constitute legal advice or an attorney-client relationship."
-        
-        return AnalysisResult(
+       # 1. Get summary and recommendation
+    summary = data.get("sum", "No summary provided.")
+    recommendation = data.get("rec", "NEGOTIATE")
+
+    disclaimer = "Lexrisk is an AI-powered assistant, not a legal professional. This analysis is for informational purposes only and does not constitute legal advice or an attorney-client relationship."
+
+    # 2. Return the result (Everything inside here is indented 4 spaces)
+    return AnalysisResult(
         risk_score=final_score,
         risk_level=risk_level,
         flagged_clauses=flagged_clauses,
@@ -471,4 +473,4 @@ class ClauseAnalyzer:
         recommendation=recommendation,
         raw_response=raw,
         disclaimer=disclaimer
-)
+    ) # 3. This closing bracket must line up perfectly with 'retur
