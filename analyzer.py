@@ -428,6 +428,7 @@ class ClauseAnalyzer:
         ]
         
         # Get summary and recommendation
+         # Get summary and recommendation
         summary = data.get("sum", "No summary provided.")
         recommendation = data.get("rec", "NEGOTIATE")
         
