@@ -1,4 +1,6 @@
 
+Copy
+
  
 import logging
 import os
@@ -21,21 +23,66 @@ st.set_page_config(
 # ── 2. Local Imports & Config ─────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
  
-# Import new modules
-from analyzer import ClauseAnalyzer
-from demo_data import DEMOS  
-from rate_limiter_v2 import (
-    get_user_id, 
-    check_rate_limit, 
-    increment_usage,
-    initialize_rate_limiter,
-    format_usage_display,
-    get_tier_info,
-    TIER_LIMITS
-)
+load_dotenv()
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger(__name__)
+ 
+# Import new modules with error handling
+try:
+    from analyzer import ClauseAnalyzer
+    ANALYZER_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"analyzer.py not found: {e}")
+    ANALYZER_AVAILABLE = False
+ 
+try:
+    from demo_data import DEMOS  
+    DEMOS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"demo_data.py not found: {e}")
+    DEMOS = {}
+    DEMOS_AVAILABLE = False
+ 
+try:
+    from rate_limiter_v2 import (
+        get_user_id, 
+        check_rate_limit, 
+        increment_usage,
+        initialize_rate_limiter,
+        format_usage_display,
+        get_tier_info,
+        TIER_LIMITS
+    )
+    RATE_LIMITER_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"rate_limiter_v2.py not found: {e}")
+    RATE_LIMITER_AVAILABLE = False
+    # Provide dummy functions to prevent crashes
+    def get_user_id():
+        return ("anonymous", "free")
+    def check_rate_limit(user_id, action):
+        return (True, 999, None, "free")
+    def increment_usage(user_id, action, pages=1, text_chars=0):
+        pass
+    def initialize_rate_limiter():
+        pass
+    def format_usage_display(user_id):
+        return ""
+    def get_tier_info(tier):
+        return {'name': 'Free', 'max_pages': 10, 'max_text_chars': 50000, 'daily_analyses': 5}
+    TIER_LIMITS = {'free': {'daily_analyses': 5}}
  
 # Import redlining
-from redliner import get_redlined_html, get_redlining_summary
+try:
+    from redliner import get_redlined_html, get_redlining_summary
+    REDLINER_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"redliner.py not found: {e}")
+    REDLINER_AVAILABLE = False
+    def get_redlined_html(text, clauses):
+        return "<p>Redlining feature not available</p>"
+    def get_redlining_summary(clauses):
+        return "<p>Summary not available</p>"
  
 # Import database utilities
 try:
@@ -47,15 +94,13 @@ try:
         track_redlined_clause
     )
     DB_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    logger.warning(f"db_utils.py not found: {e}")
     DB_AVAILABLE = False
  
-load_dotenv()
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-logger = logging.getLogger(__name__)
- 
-# Initialize rate limiter
-initialize_rate_limiter()
+# Initialize rate limiter if available
+if RATE_LIMITER_AVAILABLE:
+    initialize_rate_limiter()
  
 # ── 3. Session State Initialization ───────────────────────────────────────────
 if 'contract_text' not in st.session_state:
@@ -120,6 +165,9 @@ def analyze_contract_cached(contract_text: str, provider: str = "groq") -> dict:
     
     Returns: dict with all analysis results
     """
+    if not ANALYZER_AVAILABLE:
+        raise ValueError("Analyzer module not available")
+    
     logger.info(f"🔄 Cache MISS - Running new analysis for contract ({len(contract_text)} chars)")
     
     # Get API key
@@ -232,6 +280,11 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
  
+# Show warning if modules are missing
+if not ANALYZER_AVAILABLE:
+    st.error("⚠️ **Analyzer module not available.** Please ensure `analyzer.py` is in your deployment.")
+    st.stop()
+ 
 # ── 8. Sidebar with Usage Stats & Demo Selector ────────────────────────────────
 with st.sidebar:
     st.markdown("## 🎯 Quick Start")
@@ -247,16 +300,17 @@ with st.sidebar:
     st.markdown("---")
     
     # Demo selector
-    st.markdown("### 📚 Try a Demo Contract")
-    demo_options = ["None"] + list(DEMOS.keys())
-    selected_demo = st.selectbox("Select a demo:", demo_options)
-    
-    if selected_demo != "None" and selected_demo in DEMOS:
-        if st.button("Load Demo", use_container_width=True):
-            st.session_state.contract_text = DEMOS[selected_demo]['text']
-            st.session_state.demo_active = True
-            st.session_state.analysis_complete = False
-            st.rerun()
+    if DEMOS_AVAILABLE and DEMOS:
+        st.markdown("### 📚 Try a Demo Contract")
+        demo_options = ["None"] + list(DEMOS.keys())
+        selected_demo = st.selectbox("Select a demo:", demo_options)
+        
+        if selected_demo != "None" and selected_demo in DEMOS:
+            if st.button("Load Demo", use_container_width=True):
+                st.session_state.contract_text = DEMOS[selected_demo]['text']
+                st.session_state.demo_active = True
+                st.session_state.analysis_complete = False
+                st.rerun()
     
     st.markdown("---")
     
@@ -265,7 +319,7 @@ with st.sidebar:
     st.markdown("Need more scans or unlimited pages?")
     
     if st.button("View Pro Plans →", use_container_width=True):
-        st.switch_page("pages/signup.py")
+        st.info("Upgrade feature coming soon!")
     
     st.markdown("---")
     st.caption("🔒 Privacy: Data analyzed in memory, immediately discarded")
@@ -304,7 +358,7 @@ if uploaded_file:
                 """)
                 
                 if st.button("🚀 Upgrade Now"):
-                    st.switch_page("pages/signup.py")
+                    st.info("Upgrade feature coming soon!")
                 
                 st.stop()
             
@@ -387,7 +441,7 @@ if analyze_btn and st.session_state.contract_text.strip():
         user_id, user_type = get_user_id()
         allowed, remaining, reset_time, tier = check_rate_limit(user_id, "analysis")
         
-        if not allowed:
+        if not allowed and RATE_LIMITER_AVAILABLE:
             st.error(f"""
             🛑 **Daily Scan Limit Reached**
             
@@ -400,12 +454,12 @@ if analyze_btn and st.session_state.contract_text.strip():
             """)
             
             if st.button("View Upgrade Options"):
-                st.switch_page("pages/signup.py")
+                st.info("Upgrade feature coming soon!")
             
             st.stop()
         
         # Check for demo mode
-        if st.session_state.demo_active:
+        if st.session_state.demo_active and DEMOS_AVAILABLE:
             show_analysis_progress()
             
             demo_match = next((d['analysis'] for d in DEMOS.values() 
@@ -456,13 +510,14 @@ if analyze_btn and st.session_state.contract_text.strip():
         processing_time_ms = int((time.time() - start_time) * 1000)
         
         # Increment usage counter (atomic operation)
-        if not was_cached:
+        if not was_cached and RATE_LIMITER_AVAILABLE:
             page_count = st.session_state.contract_text.count('\n\n') // 50 + 1  # Rough estimate
             increment_usage(user_id, "analysis", pages=page_count, 
                           text_chars=len(st.session_state.contract_text))
         
         # Log analysis for analytics
         if DB_AVAILABLE and contract_hash:
+            page_count = st.session_state.contract_text.count('\n\n') // 50 + 1
             log_analysis(
                 user_id,
                 contract_hash,
@@ -584,3 +639,4 @@ st.markdown('''
     <p>© 2026 Babylon Technologies. Building in public.</p>
 </div>
 ''', unsafe_allow_html=True)
+ 
