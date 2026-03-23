@@ -157,22 +157,18 @@ class EngineRouter:
     
     @staticmethod
     def choose_engine(contract_text: str, contract_type: str) -> str:
-        text_length = len(contract_text)
-        
-        # Route to OpenAI for long/complex contracts
-        if text_length > 4000:
-            logger.info(f"Routing to OPENAI: Long contract ({text_length} chars)")
-            return "openai"
-        if contract_type == "social_media":
-            logger.info("Routing to OPENAI: Social media platform (needs calibration)")
-            return "openai"
-        if contract_type == "unknown":
-            logger.info("Routing to OPENAI: Unknown contract type (safer)")
-            return "openai"
-        if contract_type == "consumer" and text_length > 2000:
-            logger.info("Routing to OPENAI: Complex consumer app")
-            return "openai"
-            
+       text_length = len(st.session_state.contract_text)
+
+# Stay as "groq" so it uses your working Groq key and endpoint
+provider = "groq" 
+
+# Pick the best model based on length
+if text_length > 4500:
+    # This is the "OpenAI" model you see in your Groq screenshot
+    target_model = "openai/gpt-oss-120b" 
+else:
+    # Use the standard fast Llama model for short snippets
+    target_model = "llama-3.3-70b-versatile"
         # Route to Groq for short, B2B, or Employment contracts
         logger.info(f"Routing to GROQ: {contract_type} contract ({text_length} chars)")
         return "groq"
