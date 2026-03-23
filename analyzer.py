@@ -1,15 +1,7 @@
-
 """
 analyzer.py
-Core AI integration — Scans contract text for predatory clauses using 
-the expanded "Ruthless Lawyer" matrix and dual LLM routing (Groq / Gemini).
-
-FEATURES:
-1. Intelligent dual-engine router (Groq for short, Gemini for long/complex)
-2. Industry-standard calibration layer
-3. Contract type detection
-4. Improved scoring logic to prevent false positives
-5. Automatic failover if one API key is invalid
+FIXED: Replaced Gemini with OpenAI for long contracts
+Uses Groq (fast) for short, OpenAI (powerful) for long
 """
 
 import logging
@@ -21,14 +13,14 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from groq import Groq
-import google.generativeai as genai
+from openai import OpenAI
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# ── 1. The Expanded "Ruthless Lawyer" System Prompt ───────────────────────────
+# ── 1. System Prompt ───────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """"You are LEXRISK, an elite, ruthless lawyer auditing and scoring contracts and terms of service.
+SYSTEM_PROMPT = """You are LEXRISK, an elite, ruthless lawyer auditing and scoring contracts and terms of service.
 Your sole job is to protect the user, company, or organization from predatory, one-sided, and dangerous legal documents and contracts 
 
 You are hunting for the following 15 threat vectors:
@@ -70,7 +62,6 @@ JSON Format:
   "rec": "SIGN|NEGOTIATE|AVOID"
 }"""
 
-# ── NEW: Calibration Prompt (appended to system prompt for Gemini) ──
 CALIBRATION_ADDENDUM = """CRITICAL CALIBRATION RULES:
 - Industry Standard vs. Predatory: Distinguish between standard practice and actual abuse.
 - Social Media/Platform ToS: Standard content licenses (for display/moderation) are NOT IP theft. Score 40-60 unless they claim commercial rights.
@@ -114,40 +105,26 @@ class AnalysisResult:
 # ── 3. Contract Type Detector ─────────────────────────────────────────────────
 
 class ContractTypeDetector:
-    """Detect contract type to calibrate scoring appropriately"""
-    
     @staticmethod
     def detect(text: str) -> dict:
-        """
-        Returns: {
-            "type": "social_media" | "saas" | "b2b" | "consumer" | "employment" | "unknown",
-            "confidence": 0.0-1.0,
-            "indicators": [list of matched keywords]
-        }
-        """
         text_lower = text.lower()
         
-        # Social Media Platform Detection
         social_keywords = ["tweet", "retweet", "post content", "user-generated content", 
                            "social network", "followers", "timeline", "feed"]
         social_score = sum(1 for k in social_keywords if k in text_lower)
         
-        # SaaS Detection
         saas_keywords = ["software as a service", "subscription", "api access", 
                          "service level", "uptime", "cloud service"]
         saas_score = sum(1 for k in saas_keywords if k in text_lower)
         
-        # B2B Detection
         b2b_keywords = ["enterprise", "vendor", "procurement", "statement of work", 
                         "master service agreement", "purchase order"]
         b2b_score = sum(1 for k in b2b_keywords if k in text_lower)
         
-        # Consumer App Detection
         consumer_keywords = ["end user", "consumer", "personal use", "free account", 
                             "premium subscription", "in-app purchase"]
         consumer_score = sum(1 for k in consumer_keywords if k in text_lower)
         
-        # Employment Detection
         employment_keywords = ["employee", "employer", "employment agreement", 
                               "confidential information", "non-compete", "stock options"]
         employment_score = sum(1 for k in employment_keywords if k in text_lower)
@@ -162,7 +139,7 @@ class ContractTypeDetector:
         
         detected_type = max(scores, key=scores.get)
         max_score = scores[detected_type]
-        confidence = min(max_score / 5.0, 1.0)  # 5+ matches = high confidence
+        confidence = min(max_score / 5.0, 1.0)
         
         if confidence < 0.2:
             detected_type = "unknown"
@@ -173,56 +150,55 @@ class ContractTypeDetector:
             "indicators": [k for k, v in scores.items() if v > 0]
         }
 
-# ── 4. Dual-Engine Router ─────────────────────────────────────────────────────
+# ── 4. Dual-Engine Router (GROQ + OPENAI) ─────────────────────────────────────
 
 class EngineRouter:
-    """Intelligently routes to Groq (fast, aggressive) or Gemini (nuanced, calibrated)"""
+    """Routes to Groq (fast) or OpenAI (powerful for long/complex)"""
     
     @staticmethod
     def choose_engine(contract_text: str, contract_type: str) -> str:
         text_length = len(contract_text)
         
-        # Route to Gemini for:
+        # Route to OpenAI for long/complex contracts
         if text_length > 4000:
-            logger.info(f"Routing to GEMINI: Long contract ({text_length} chars)")
-            return "gemini"
+            logger.info(f"Routing to OPENAI: Long contract ({text_length} chars)")
+            return "openai"
         if contract_type == "social_media":
-            logger.info("Routing to GEMINI: Social media platform (needs calibration)")
-            return "gemini"
+            logger.info("Routing to OPENAI: Social media platform (needs calibration)")
+            return "openai"
         if contract_type == "unknown":
-            logger.info("Routing to GEMINI: Unknown contract type (safer)")
-            return "gemini"
+            logger.info("Routing to OPENAI: Unknown contract type (safer)")
+            return "openai"
         if contract_type == "consumer" and text_length > 2000:
-            logger.info("Routing to GEMINI: Complex consumer app")
-            return "gemini"
+            logger.info("Routing to OPENAI: Complex consumer app")
+            return "openai"
             
         # Route to Groq for short, B2B, or Employment contracts
         logger.info(f"Routing to GROQ: {contract_type} contract ({text_length} chars)")
         return "groq"
 
-# ── 5. Analyzer Engine (ENHANCED) ─────────────────────────────────────────────
+# ── 5. Analyzer Engine ────────────────────────────────────────────────────────
 
 class ClauseAnalyzer:
-    def __init__(self, api_key: str = None, groq_key: str = None, gemini_key: str = None, provider: str = "auto"):
+    def __init__(self, api_key: str = None, groq_key: str = None, openai_key: str = None, provider: str = "auto"):
         self.provider = provider.lower()
         
-        # SAFELY fetch keys from arguments, Streamlit secrets, or Environment variables
+        # Fetch keys from Streamlit secrets or environment
         try:
             import streamlit as st
             st_groq = st.secrets.get("GROQ_API_KEY")
-            st_gemini = st.secrets.get("GEMINI_API_KEY")
+            st_openai = st.secrets.get("OPENAI_API_KEY")
         except:
             st_groq = None
-            st_gemini = None
+            st_openai = None
             
         self.groq_key = groq_key or (api_key if self.provider in ["groq", "auto"] else None) or st_groq or os.getenv("GROQ_API_KEY")
-        self.gemini_key = gemini_key or (api_key if self.provider in ["gemini", "auto"] else None) or st_gemini or os.getenv("GEMINI_API_KEY")
+        self.openai_key = openai_key or (api_key if self.provider in ["openai", "auto"] else None) or st_openai or os.getenv("OPENAI_API_KEY")
         
-        # Initialize Groq if available
+        # Initialize Groq
         if self.groq_key:
             try:
                 self.groq_client = Groq(api_key=self.groq_key)
-                # Updated to newest flagship versatile model
                 self.groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
                 logger.info("✅ Groq engine initialized")
             except Exception as e:
@@ -232,22 +208,22 @@ class ClauseAnalyzer:
             self.groq_client = None
             logger.warning("⚠️ No Groq API key provided")
             
-        # Initialize Gemini if available
-        if self.gemini_key:
+        # Initialize OpenAI
+        if self.openai_key:
             try:
-                genai.configure(api_key=self.gemini_key)
-                self.gemini_model = genai.GenerativeModel('gemini-1.5-pro')
-                logger.info("✅ Gemini engine initialized")
+                self.openai_client = OpenAI(api_key=self.openai_key)
+                self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                logger.info(f"✅ OpenAI engine initialized ({self.openai_model})")
             except Exception as e:
-                logger.warning(f"⚠️ Gemini initialization failed: {e}")
-                self.gemini_model = None
+                logger.warning(f"⚠️ OpenAI initialization failed: {e}")
+                self.openai_client = None
         else:
-            self.gemini_model = None
-            logger.warning("⚠️ No Gemini API key provided")
+            self.openai_client = None
+            logger.warning("⚠️ No OpenAI API key provided")
             
         # Validate at least one engine is available
-        if not self.groq_client and not self.gemini_model:
-            raise ValueError("At least one API key (Groq or Gemini) must be provided in Streamlit secrets or .env")
+        if not self.groq_client and not self.openai_client:
+            raise ValueError("At least one API key (Groq or OpenAI) must be provided")
             
         logger.info(f"ClauseAnalyzer initialized with provider mode: {self.provider.upper()}")
 
@@ -270,18 +246,18 @@ class ClauseAnalyzer:
             
         # Validate chosen engine is available
         if chosen_engine == "groq" and not self.groq_client:
-            if self.gemini_model:
-                logger.warning("Groq requested but unavailable, falling back to Gemini")
-                chosen_engine = "gemini"
+            if self.openai_client:
+                logger.warning("Groq requested but unavailable, falling back to OpenAI")
+                chosen_engine = "openai"
             else:
                 raise ValueError("Groq engine not available and no fallback configured")
                 
-        if chosen_engine == "gemini" and not self.gemini_model:
+        if chosen_engine == "openai" and not self.openai_client:
             if self.groq_client:
-                logger.warning("Gemini requested but unavailable, falling back to Groq")
+                logger.warning("OpenAI requested but unavailable, falling back to Groq")
                 chosen_engine = "groq"
             else:
-                raise ValueError("Gemini engine not available and no fallback configured")
+                raise ValueError("OpenAI engine not available and no fallback configured")
                 
         # AUTOMATIC FAILOVER LOGIC
         try:
@@ -289,18 +265,18 @@ class ClauseAnalyzer:
                 try:
                     raw_json = self._call_groq(contract_text)
                 except Exception as e:
-                    if self.gemini_model:
-                        logger.warning(f"Groq API failed, falling back to Gemini. Error: {e}")
-                        raw_json = self._call_gemini(contract_text)
-                        chosen_engine = "gemini"
+                    if self.openai_client:
+                        logger.warning(f"Groq API failed, falling back to OpenAI. Error: {e}")
+                        raw_json = self._call_openai(contract_text)
+                        chosen_engine = "openai"
                     else:
                         raise e
             else:
                 try:
-                    raw_json = self._call_gemini(contract_text)
+                    raw_json = self._call_openai(contract_text)
                 except Exception as e:
                     if self.groq_client:
-                        logger.warning(f"Gemini API failed (likely invalid key), falling back to Groq. Error: {e}")
+                        logger.warning(f"OpenAI API failed, falling back to Groq. Error: {e}")
                         raw_json = self._call_groq(contract_text)
                         chosen_engine = "groq"
                     else:
@@ -317,10 +293,8 @@ class ClauseAnalyzer:
             logger.error(f"API error ({chosen_engine}): {e}")
             raise
 
-    # ── LLM Calling Logic ──
-
     def _call_groq(self, contract_text: str) -> str:
-        """Call Groq API with standard system prompt"""
+        """Call Groq API"""
         response = self.groq_client.chat.completions.create(
             model=self.groq_model,
             messages=[
@@ -334,33 +308,31 @@ class ClauseAnalyzer:
         )
         return response.choices[0].message.content
 
-    def _call_gemini(self, contract_text: str) -> str:
-        """Call Gemini API with calibrated system prompt"""
+    def _call_openai(self, contract_text: str) -> str:
+        """Call OpenAI API with calibrated prompt"""
         enhanced_prompt = f"{SYSTEM_PROMPT}\n\n{CALIBRATION_ADDENDUM}"
-        full_prompt = f"{enhanced_prompt}\n\n{USER_PROMPT_TEMPLATE.format(contract_text=contract_text[:30000])}"
         
-        response = self.gemini_model.generate_content(
-            full_prompt,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                temperature=0.1
-            )
+        response = self.openai_client.chat.completions.create(
+            model=self.openai_model,
+            messages=[
+                {"role": "system", "content": enhanced_prompt},
+                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(
+                    contract_text=contract_text[:30000]
+                )}
+            ],
+            temperature=0.1,
+            response_format={"type": "json_object"}
         )
-        return response.text
-
-    # ── The Expanded Deterministic Scoring Matrix (CALIBRATED) ──
+        return response.choices[0].message.content
 
     def _parse_and_enforce_matrix(self, raw: str, contract_type: str) -> AnalysisResult:
-        """Parse LLM response and apply deterministic scoring with contract-type calibration"""
-        # Strip markdown fences if present
+        """Parse LLM response and apply deterministic scoring"""
         clean = re.sub(r"```(?:json)?|```", "", raw).strip()
         data = json.loads(clean)
 
         base_score = int(data.get("score", 0))
         flagged_clauses_data = data.get("flags", [])
         
-        # 🛡️ THE DETERMINISTIC PENALTY MATRIX 🛡️
-        # Apply contract-type-specific calibration
         penalty_scores = {
             "Arbitration": 15,
             "IP Rights": 20,
@@ -379,16 +351,13 @@ class ClauseAnalyzer:
             "Injunctive Relief": 20
         }
         
-        # Calculate deterministic score
         deterministic_score = 0
         for clause in flagged_clauses_data:
             cat = clause.get("cat", "")
             sev = clause.get("sev", "LOW")
             
-            # Base penalty
             base_penalty = penalty_scores.get(cat, 10)
             
-            # Severity multiplier
             sev_multiplier = {
                 "LOW": 0.5,
                 "MEDIUM": 1.0,
@@ -398,14 +367,10 @@ class ClauseAnalyzer:
             
             deterministic_score += int(base_penalty * sev_multiplier)
         
-        # Cap at 100
         deterministic_score = min(deterministic_score, 100)
-        
-        # Blend AI score with deterministic score (60% deterministic, 40% AI)
         final_score = int(deterministic_score * 0.6 + base_score * 0.4)
         final_score = min(final_score, 100)
         
-        # Determine risk level
         if final_score >= 85:
             risk_level = "CRITICAL"
         elif final_score >= 70:
@@ -415,7 +380,6 @@ class ClauseAnalyzer:
         else:
             risk_level = "LOW"
         
-        # Parse flagged clauses
         flagged_clauses = [
             FlaggedClause(
                 clause_text=c.get("txt", ""),
@@ -427,7 +391,6 @@ class ClauseAnalyzer:
             for c in flagged_clauses_data
         ]
         
-        # Get summary and recommendation
         summary = data.get("sum", "No summary provided.")
         recommendation = data.get("rec", "NEGOTIATE")
         
