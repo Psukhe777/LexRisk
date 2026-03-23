@@ -1,3 +1,4 @@
+
 """
 analyzer.py
 Core AI integration — Scans contract text for predatory clauses using 
@@ -9,7 +10,6 @@ FEATURES:
 3. Contract type detection
 4. Improved scoring logic to prevent false positives
 5. Automatic failover if one API key is invalid
-6. FIXED: Backward compatibility for older google-generativeai versions
 """
 
 import logging
@@ -236,9 +236,8 @@ class ClauseAnalyzer:
         if self.gemini_key:
             try:
                 genai.configure(api_key=self.gemini_key)
-                # Use gemini-1.5-flash instead of gemini-1.5-pro (more widely available)
-                self.gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-                logger.info("✅ Gemini engine initialized (gemini-1.5-flash)")
+                self.gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+                logger.info("✅ Gemini engine initialized")
             except Exception as e:
                 logger.warning(f"⚠️ Gemini initialization failed: {e}")
                 self.gemini_model = None
@@ -336,32 +335,18 @@ class ClauseAnalyzer:
         return response.choices[0].message.content
 
     def _call_gemini(self, contract_text: str) -> str:
-        """
-        Call Gemini API with calibrated system prompt
-        FIXED: Backward compatibility for older google-generativeai versions
-        """
+        """Call Gemini API with calibrated system prompt"""
         enhanced_prompt = f"{SYSTEM_PROMPT}\n\n{CALIBRATION_ADDENDUM}"
         full_prompt = f"{enhanced_prompt}\n\n{USER_PROMPT_TEMPLATE.format(contract_text=contract_text[:30000])}"
         
-        # Use legacy API (compatible with all versions)
-        logger.info("⚠️ Using legacy Gemini API (compatible with older package versions)")
         response = self.gemini_model.generate_content(
             full_prompt,
             generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
                 temperature=0.1
             )
         )
-        
-        # Extract JSON from response text (may have markdown fences)
-        text = response.text
-        
-        # Try to extract JSON if wrapped in markdown
-        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
-        if json_match:
-            logger.info("✅ Extracted JSON from markdown fences")
-            return json_match.group(1)
-        
-        return text
+        return response.text
 
     # ── The Expanded Deterministic Scoring Matrix (CALIBRATED) ──
 
