@@ -676,4 +676,4 @@ st.markdown('''
     <p><strong>LEXRISK</strong> by Babylon Technologies</p>
     <p>© 2026 Babylon Technologies. Building in public.</p>
 </div>
-''', (unsafe_allow_html=True)
+''', unsafe_allow_html=True)
