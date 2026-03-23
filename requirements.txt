@@ -9,8 +9,8 @@ python-dotenv==1.0.1
 
 # ── AI / LLM ─────────────────────────────────────────────────────────────────
 groq==0.9.0
-google-generativeai==0.3.2         # Gemini API for long contracts
-
+openai>=1.12.0
+google-generativeai>=0.3.0
 # ── PDF Processing ───────────────────────────────────────────────────────────
 pypdf2==3.0.1
 pdfplumber==0.11.0                 # More accurate text extraction
@@ -40,26 +40,4 @@ pytest-cov==5.0.0
 black==24.4.2                      # Code formatter
 ruff==0.4.9                        # Fast linter
 
-# ══════════════════════════════════════════════════════════════════════════════
-# DEPLOYMENT NOTES
-# ══════════════════════════════════════════════════════════════════════════════
-#
-# Railway / Render:
-# - Set DATABASE_URL environment variable to your PostgreSQL connection string
-# - Example: postgresql://user:password@host:5432/lexrisk_db
-#
-# Streamlit Cloud:
-# - Add GROQ_API_KEY and/or GEMINI_API_KEY to secrets.toml
-# - Add DATABASE_URL to secrets.toml if using PostgreSQL
-# - Falls back to JSON file storage if DATABASE_URL not provided
-#
-# Local Development:
-# - Copy .env.example to .env
-# - Add your API keys and database URL
-# - Run: pip install -r requirements.txt
-# - Run: streamlit run app_v2.py
-#
-# Memory Optimization:
-# - Removed sentence-transformers (saves ~500MB)
-# - Total memory usage: <200MB on Railway free tier
-# - Uses LLM semantic analysis instead of local ML models
+ 
