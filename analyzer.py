@@ -236,8 +236,9 @@ class ClauseAnalyzer:
         if self.gemini_key:
             try:
                 genai.configure(api_key=self.gemini_key)
-                self.gemini_model = genai.GenerativeModel('gemini-1.5-pro')
-                logger.info("✅ Gemini engine initialized")
+                # Use gemini-1.5-flash instead of gemini-1.5-pro (more widely available)
+                self.gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+                logger.info("✅ Gemini engine initialized (gemini-1.5-flash)")
             except Exception as e:
                 logger.warning(f"⚠️ Gemini initialization failed: {e}")
                 self.gemini_model = None
@@ -342,40 +343,25 @@ class ClauseAnalyzer:
         enhanced_prompt = f"{SYSTEM_PROMPT}\n\n{CALIBRATION_ADDENDUM}"
         full_prompt = f"{enhanced_prompt}\n\n{USER_PROMPT_TEMPLATE.format(contract_text=contract_text[:30000])}"
         
-        # Try modern API first, fallback to older version if needed
-        try:
-            response = self.gemini_model.generate_content(
-                full_prompt,
-                generation_config=genai.GenerationConfig(
-                    response_mime_type="application/json",
-                    temperature=0.1
-                )
+        # Use legacy API (compatible with all versions)
+        logger.info("⚠️ Using legacy Gemini API (compatible with older package versions)")
+        response = self.gemini_model.generate_content(
+            full_prompt,
+            generation_config=genai.GenerationConfig(
+                temperature=0.1
             )
-            return response.text
-        except TypeError as e:
-            # Fallback for older google-generativeai versions (< 0.4.0)
-            if "response_mime_type" in str(e):
-                logger.info("⚠️ Using legacy Gemini API (response_mime_type not supported in this version)")
-                response = self.gemini_model.generate_content(
-                    full_prompt,
-                    generation_config=genai.GenerationConfig(
-                        temperature=0.1
-                    )
-                )
-                
-                # Extract JSON from response text (may have markdown fences)
-                text = response.text
-                
-                # Try to extract JSON if wrapped in markdown
-                json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
-                if json_match:
-                    logger.info("✅ Extracted JSON from markdown fences")
-                    return json_match.group(1)
-                
-                return text
-            else:
-                # Different TypeError, re-raise
-                raise
+        )
+        
+        # Extract JSON from response text (may have markdown fences)
+        text = response.text
+        
+        # Try to extract JSON if wrapped in markdown
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+        if json_match:
+            logger.info("✅ Extracted JSON from markdown fences")
+            return json_match.group(1)
+        
+        return text
 
     # ── The Expanded Deterministic Scoring Matrix (CALIBRATED) ──
 
