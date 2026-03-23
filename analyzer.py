@@ -10,7 +10,6 @@ FEATURES:
 3. Contract type detection
 4. Improved scoring logic to prevent false positives
 5. Automatic failover if one API key is invalid
-6. FIXED: Backward compatibility for older google-generativeai versions
 """
 
 import logging
@@ -336,47 +335,18 @@ class ClauseAnalyzer:
         return response.choices[0].message.content
 
     def _call_gemini(self, contract_text: str) -> str:
-        """
-        Call Gemini API with calibrated system prompt
-        FIXED: Backward compatibility for older google-generativeai versions
-        """
+        """Call Gemini API with calibrated system prompt"""
         enhanced_prompt = f"{SYSTEM_PROMPT}\n\n{CALIBRATION_ADDENDUM}"
         full_prompt = f"{enhanced_prompt}\n\n{USER_PROMPT_TEMPLATE.format(contract_text=contract_text[:30000])}"
         
-        # Try modern API first, fallback to older version if needed
-        try:
-            response = self.gemini_model.generate_content(
-                full_prompt,
-                generation_config=genai.GenerationConfig(
-                    response_mime_type="application/json",
-                    temperature=0.1
-                )
+        response = self.gemini_model.generate_content(
+            full_prompt,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                temperature=0.1
             )
-            return response.text
-        except TypeError as e:
-            # Fallback for older google-generativeai versions (< 0.4.0)
-            if "response_mime_type" in str(e):
-                logger.info("⚠️ Using legacy Gemini API (response_mime_type not supported in this version)")
-                response = self.gemini_model.generate_content(
-                    full_prompt,
-                    generation_config=genai.GenerationConfig(
-                        temperature=0.1
-                    )
-                )
-                
-                # Extract JSON from response text (may have markdown fences)
-                text = response.text
-                
-                # Try to extract JSON if wrapped in markdown
-                json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
-                if json_match:
-                    logger.info("✅ Extracted JSON from markdown fences")
-                    return json_match.group(1)
-                
-                return text
-            else:
-                # Different TypeError, re-raise
-                raise
+        )
+        return response.text
 
     # ── The Expanded Deterministic Scoring Matrix (CALIBRATED) ──
 
@@ -458,19 +428,17 @@ class ClauseAnalyzer:
         ]
         
         # Get summary and recommendation
-       # 1. Get summary and recommendation
-    summary = data.get("sum", "No summary provided.")
-    recommendation = data.get("rec", "NEGOTIATE")
-
-    disclaimer = "Lexrisk is an AI-powered assistant, not a legal professional. This analysis is for informational purposes only and does not constitute legal advice or an attorney-client relationship."
-
-    # 2. Return the result (Everything inside here is indented 4 spaces)
-    return AnalysisResult(
-        risk_score=final_score,
-        risk_level=risk_level,
-        flagged_clauses=flagged_clauses,
-        summary=summary,
-        recommendation=recommendation,
-        raw_response=raw,
-        disclaimer=disclaimer
-    ) # 3. This closing bracket must line up perfectly with 'retur
+        summary = data.get("sum", "No summary provided.")
+        recommendation = data.get("rec", "NEGOTIATE")
+        
+        disclaimer = "Lexrisk is an AI-powered assistant, not a legal professional. This analysis is for informational purposes only and does not constitute legal advice or an attorney-client relationship."
+        
+        return AnalysisResult(
+            risk_score=final_score,
+            risk_level=risk_level,
+            flagged_clauses=flagged_clauses,
+            summary=summary,
+            recommendation=recommendation,
+            raw_response=raw,
+            disclaimer=disclaimer
+        )
