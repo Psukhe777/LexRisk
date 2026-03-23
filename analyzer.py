@@ -463,14 +463,12 @@ class ClauseAnalyzer:
         
         disclaimer = "Lexrisk is an AI-powered assistant, not a legal professional. This analysis is for informational purposes only and does not constitute legal advice or an attorney-client relationship."
         
-        return AnalysisResult(
-            risk_score=final_score,
-            risk_level=risk_level,
-            flagged_clauses=flagged_clauses,
-            summary=summary,
-            recommendation=recommendation,
-            raw_response=raw,
-            disclaimer=disclaimer
-        )
-            disclaimer=disclaimer
-        )
+  return AnalysisResult(
+    risk_score=final_score,
+    risk_level=risk_level,
+    flagged_clauses=flagged_clauses,
+    summary=summary,
+    recommendation=recommendation,
+    raw_response=raw,
+    disclaimer=disclaimer
+)
