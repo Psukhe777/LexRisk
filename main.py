@@ -1,3 +1,13 @@
+"""
+app.py — LexRisk Main Application (Production Hardened)
+Features:
+- Graceful error handling with branded UI fallbacks
+- Circuit breaker integration for API resilience
+- Strict upload limits and validation
+- Memory-efficient PDF processing
+- Real-time telemetry logging
+"""
+
 import logging
 import os
 import sys
@@ -6,8 +16,9 @@ import hashlib
 import pdfplumber
 import streamlit as st
 from dotenv import load_dotenv
-import plotly.graph_objects as go
- 
+from datetime import datetime
+from typing import Optional, Dict, Any
+
 # ── 1. Page Config (MUST BE FIRST STREAMLIT COMMAND) ──────────────────────────
 st.set_page_config(
     page_title="Lexrisk ⚖️",
@@ -15,129 +26,97 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="expanded",
 )
- 
-# ── 2. Local Imports & Config ─────────────────────────────────────────────────
-sys.path.insert(0, os.path.dirname(__file__))
- # TEMPORARY DEBUGGING
 
+# ── 2. Local Imports & Configuration ───────────────────────────────────────────
+sys.path.insert(0, os.path.dirname(__file__))
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
- 
-# Import new modules with DETAILED error handling
+
+# ── 3. Strict Upload Limits ────────────────────────────────────────────────────
+MAX_FILE_SIZE_MB = 25  # 25MB hard limit
+MAX_PDF_PAGES_FREE = 50  # Free tier max
+MAX_PDF_PAGES_PRO = 500  # Pro tier max
+MAX_TEXT_CHARS_FREE = 100000  # ~100KB text
+MAX_TEXT_CHARS_PRO = 1000000  # ~1MB text
+
+# ── 4. Import Modules with Error Handling ──────────────────────────────────────
+try:
+    from circuit_breaker import get_openai_circuit_breaker, CircuitBreakerOpen
+    CIRCUIT_BREAKER_AVAILABLE = True
+except ImportError:
+    logger.warning("circuit_breaker.py not found - degraded mode")
+    CIRCUIT_BREAKER_AVAILABLE = False
+
 try:
     from analyzer import ClauseAnalyzer
     ANALYZER_AVAILABLE = True
-    logger.info("✅ analyzer.py loaded successfully")
-except SyntaxError as e:
-    logger.error(f"❌ SYNTAX ERROR in analyzer.py at line {e.lineno}: {e.msg}")
-    ANALYZER_AVAILABLE = False
-    st.error(f"""
-    **SYNTAX ERROR in analyzer.py**
-    
-    Line {e.lineno}: {e.msg}
-    
-    Please check your analyzer.py file for:
-    - Missing quotes or brackets
-    - Incorrect indentation
-    - Invalid Python syntax
-    
-    Error details: {e.text}
-    """)
-    st.stop()
-except ImportError as e:
-    logger.error(f"❌ IMPORT ERROR: {e}")
-    ANALYZER_AVAILABLE = False
-    st.error(f"""
-    **Cannot import analyzer.py**
-    
-    Error: {e}
-    
-    Possible causes:
-    1. File is missing from repository
-    2. File has a dependency error
-    3. Required package is missing
-    
-    Check that analyzer.py exists and all packages in requirements.txt are installed.
-    """)
-    st.stop()
 except Exception as e:
-    logger.error(f"❌ UNKNOWN ERROR loading analyzer.py: {e}")
-    import traceback
+    logger.error(f"Failed to load analyzer: {e}")
     ANALYZER_AVAILABLE = False
-    st.error(f"""
-    **Error loading analyzer.py**
-    
-    {e}
-    
-    Full traceback:
-    """)
-    st.code(traceback.format_exc())
+    st.error("⚠️ **System Initialization Error** - Please contact support")
     st.stop()
- 
-try:
-    from demo_data import DEMOS  
-    DEMOS_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"demo_data.py not found: {e}")
-    DEMOS = {}
-    DEMOS_AVAILABLE = False
- 
+
 try:
     from rate_limiter_v2 import (
-        get_user_id, 
-        check_rate_limit, 
-        increment_usage,
-        initialize_rate_limiter,
-        format_usage_display,
-        get_tier_info,
-        TIER_LIMITS
+        get_user_id, check_rate_limit, increment_usage,
+        initialize_rate_limiter, format_usage_display, get_tier_info, TIER_LIMITS
     )
     RATE_LIMITER_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"rate_limiter_v2.py not found: {e}")
+except ImportError:
     RATE_LIMITER_AVAILABLE = False
-    def get_user_id():
-        return ("anonymous", "free")
-    def check_rate_limit(user_id, action):
-        return (True, 999, None, "free")
-    def increment_usage(user_id, action, pages=1, text_chars=0):
-        pass
-    def initialize_rate_limiter():
-        pass
-    def format_usage_display(user_id):
-        return ""
-    def get_tier_info(tier):
-        return {'name': 'Free', 'max_pages': 10, 'max_text_chars': 50000, 'daily_analyses': 5}
+    def get_user_id(): return ("anonymous", "free")
+    def check_rate_limit(uid, act): return (True, 999, None, "free")
+    def increment_usage(uid, act, p=1, tc=0): pass
+    def initialize_rate_limiter(): pass
+    def format_usage_display(uid): return ""
+    def get_tier_info(t): return {'name': 'Free', 'max_pages': 50, 'max_text_chars': 100000, 'daily_analyses': 5}
     TIER_LIMITS = {'free': {'daily_analyses': 5}}
- 
+
+try:
+    from telemetry import log_analysis_telemetry, log_error_telemetry
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    TELEMETRY_AVAILABLE = False
+    def log_analysis_telemetry(*args, **kwargs): pass
+    def log_error_telemetry(*args, **kwargs): pass
+
+try:
+    from views import render_risk_gauge, render_flagged_clauses, render_hero
+    VIEWS_AVAILABLE = True
+except ImportError:
+    VIEWS_AVAILABLE = False
+    logger.warning("views.py not found - using fallback UI")
+
+try:
+    from db_utils import (
+        get_contract_hash, get_cached_analysis, cache_analysis,
+        log_analysis, track_redlined_clause
+    )
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+
 try:
     from redliner import get_redlined_html, get_redlining_summary
     REDLINER_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"redliner.py not found: {e}")
+except ImportError:
     REDLINER_AVAILABLE = False
-    def get_redlined_html(text, clauses):
-        return "<p>Redlining feature not available</p>"
-    def get_redlining_summary(clauses):
-        return "<p>Summary not available</p>"
- 
+    def get_redlined_html(text, clauses): return "<p>Redlining unavailable</p>"
+    def get_redlining_summary(clauses): return "<p>Summary unavailable</p>"
+
 try:
-    from db_utils import (
-        get_contract_hash,
-        get_cached_analysis,
-        cache_analysis,
-        log_analysis,
-        track_redlined_clause
-    )
-    DB_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"db_utils.py not found: {e}")
-    DB_AVAILABLE = False
- 
+    from demo_data import DEMOS
+    DEMOS_AVAILABLE = True
+except ImportError:
+    DEMOS = {}
+    DEMOS_AVAILABLE = False
+
+# ── 5. Initialize Systems ───────────────────────────────────────────────────────
 if RATE_LIMITER_AVAILABLE:
     initialize_rate_limiter()
- 
+
+# ── 6. Session State Initialization ────────────────────────────────────────────
 if 'contract_text' not in st.session_state:
     st.session_state.contract_text = ""
 if 'demo_active' not in st.session_state:
@@ -148,7 +127,10 @@ if 'last_analysis_result' not in st.session_state:
     st.session_state.last_analysis_result = None
 if 'show_redlined_view' not in st.session_state:
     st.session_state.show_redlined_view = False
- 
+if 'api_error_count' not in st.session_state:
+    st.session_state.api_error_count = 0
+
+# ── 7. CSS Styling ──────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
     header {visibility: hidden !important;}
@@ -156,44 +138,178 @@ st.markdown("""
     [data-testid="stToolbar"] {visibility: hidden !important;}
     #MainMenu {visibility: hidden !important;}
     footer {visibility: hidden !important;}
-    [data-testid="viewerBadge"] {display: none !important;}
     
     .block-container {
         padding-top: 2rem;
         padding-bottom: 2rem;
     }
- 
-    .risk-critical { color: #ff4444; font-weight: bold; font-size: 1.5rem; }
-    .risk-high     { color: #ff8800; font-weight: bold; font-size: 1.5rem; }
-    .risk-medium   { color: #ffcc00; font-weight: bold; font-size: 1.5rem; }
-    .risk-low      { color: #44cc44; font-weight: bold; font-size: 1.5rem; }
     
-    .cache-badge {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    .error-banner {
+        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
         color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-        font-weight: bold;
-        display: inline-block;
-        margin: 0.5rem 0;
+        padding: 1.5rem;
+        border-radius: 12px;
+        text-align: center;
+        margin: 2rem 0;
         animation: pulse 2s infinite;
+    }
+    
+    .warning-banner {
+        background: linear-gradient(135deg, #feca57 0%, #ff9ff3 100%);
+        color: #2d3436;
+        padding: 1.5rem;
+        border-radius: 12px;
+        text-align: center;
+        margin: 2rem 0;
     }
     
     @keyframes pulse {
         0%, 100% { opacity: 1; }
-        50% { opacity: 0.7; }
+        50% { opacity: 0.85; }
     }
 </style>
 """, unsafe_allow_html=True)
- 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UTILITY FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def validate_pdf_upload(uploaded_file, tier: str) -> tuple[bool, Optional[str]]:
+    """
+    Validate PDF upload against strict limits.
+    Returns: (is_valid, error_message)
+    """
+    # Check file size
+    file_size_mb = uploaded_file.size / (1024 * 1024)
+    if file_size_mb > MAX_FILE_SIZE_MB:
+        return False, f"File size ({file_size_mb:.1f}MB) exceeds maximum ({MAX_FILE_SIZE_MB}MB)"
+    
+    # Check page count
+    tier_info = get_tier_info(tier)
+    max_pages = tier_info.get('max_pages', MAX_PDF_PAGES_FREE)
+    
+    try:
+        with pdfplumber.open(uploaded_file) as pdf:
+            page_count = len(pdf.pages)
+            
+            if max_pages != -1 and page_count > max_pages:
+                return False, (
+                    f"PDF has {page_count} pages but your {tier_info['name']} plan "
+                    f"allows {max_pages} pages"
+                )
+    except Exception as e:
+        return False, f"Failed to read PDF: {str(e)}"
+    
+    return True, None
+
+
+def extract_pdf_text(uploaded_file, tier: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Extract text from PDF with memory-efficient processing.
+    Returns: (extracted_text, error_message)
+    """
+    try:
+        tier_info = get_tier_info(tier)
+        max_pages = tier_info.get('max_pages', MAX_PDF_PAGES_FREE)
+        max_chars = tier_info.get('max_text_chars', MAX_TEXT_CHARS_FREE)
+        
+        text_parts = []
+        total_chars = 0
+        
+        with pdfplumber.open(uploaded_file) as pdf:
+            pages_to_process = min(len(pdf.pages), max_pages) if max_pages != -1 else len(pdf.pages)
+            
+            for i, page in enumerate(pdf.pages[:pages_to_process]):
+                if max_chars != -1 and total_chars >= max_chars:
+                    break
+                
+                page_text = page.extract_text() or ""
+                
+                # Truncate if approaching limit
+                if max_chars != -1:
+                    remaining = max_chars - total_chars
+                    page_text = page_text[:remaining]
+                
+                text_parts.append(page_text)
+                total_chars += len(page_text)
+            
+            extracted_text = "\n\n".join(text_parts)
+            
+            if max_chars != -1 and len(extracted_text) > max_chars:
+                extracted_text = extracted_text[:max_chars]
+                logger.warning(f"Text truncated to {max_chars:,} characters")
+            
+            return extracted_text, None
+            
+    except Exception as e:
+        logger.error(f"PDF extraction error: {e}")
+        return None, f"Failed to extract text: {str(e)}"
+
+
+def analyze_with_circuit_breaker(contract_text: str, user_id: str) -> Dict[str, Any]:
+    """
+    Analyze contract with circuit breaker protection.
+    Automatically fails over to Groq if OpenAI is failing.
+    """
+    text_length = len(contract_text)
+    start_time = time.time()
+    
+    # Determine initial provider
+    initial_provider = "openai" if text_length > 4500 else "groq"
+    
+    # Try with circuit breaker
+    if CIRCUIT_BREAKER_AVAILABLE and initial_provider == "openai":
+        breaker = get_openai_circuit_breaker()
+        
+        try:
+            # Wrap OpenAI call in circuit breaker
+            def openai_call():
+                return analyze_contract_cached(contract_text, "openai")
+            
+            result = breaker.call(openai_call)
+            result['_provider_used'] = 'openai'
+            result['_breaker_state'] = breaker.get_state()
+            
+        except CircuitBreakerOpen as e:
+            logger.warning(f"Circuit breaker OPEN - falling back to Groq: {e}")
+            
+            # Circuit is open - use Groq fallback
+            result = analyze_contract_cached(contract_text, "groq")
+            result['_provider_used'] = 'groq'
+            result['_breaker_state'] = 'open'
+            result['_failover'] = True
+            
+            st.info("⚡ **Fast Mode Active** - Using optimized processing engine")
+            
+        except Exception as e:
+            logger.error(f"OpenAI call failed: {e}")
+            
+            # OpenAI failed but circuit not yet open - try Groq
+            logger.info("Attempting Groq fallback after OpenAI failure")
+            result = analyze_contract_cached(contract_text, "groq")
+            result['_provider_used'] = 'groq'
+            result['_failover'] = True
+    else:
+        # Use initial provider without circuit breaker
+        result = analyze_contract_cached(contract_text, initial_provider)
+        result['_provider_used'] = initial_provider
+        result['_breaker_state'] = 'n/a'
+    
+    processing_time = time.time() - start_time
+    result['_processing_time'] = processing_time
+    
+    return result
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def analyze_contract_cached(contract_text: str, provider: str = "groq") -> dict:
+    """Cached analysis function"""
     if not ANALYZER_AVAILABLE:
         raise ValueError("Analyzer module not available")
     
-    logger.info(f"🔄 Cache MISS - Running new analysis for contract ({len(contract_text)} chars)")
+    logger.info(f"🔄 Cache MISS - Running {provider} analysis ({len(contract_text)} chars)")
     
-    # ✅ FIXED: OpenAI instead of Gemini
     if provider == "openai":
         api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     else:
@@ -226,64 +342,13 @@ def analyze_contract_cached(contract_text: str, provider: str = "groq") -> dict:
     }
     
     return result_dict
- 
-def create_risk_gauge(score):
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta",
-        value=score,
-        domain={'x': [0, 1], 'y': [0, 1]},
-        title={'text': "Risk Score", 'font': {'size': 24}},
-        delta={'reference': 50},
-        gauge={
-            'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
-            'bar': {'color': "rgba(0,0,0,0)"},
-            'bgcolor': "white",
-            'borderwidth': 2,
-            'bordercolor': "gray",
-            'steps': [
-                {'range': [0, 25], 'color': '#44cc44'},
-                {'range': [25, 50], 'color': '#ffcc00'},
-                {'range': [50, 75], 'color': '#ff8800'},
-                {'range': [75, 100], 'color': '#ff4444'}
-            ],
-            'threshold': {
-                'line': {'color': "red", 'width': 4},
-                'thickness': 0.75,
-                'value': score
-            }
-        }
-    ))
-    
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font={'color': "white", 'family': "Arial"},
-        height=300
-    )
-    
-    return fig
- 
-def show_analysis_progress():
-    stages = [
-        ("🔍 Initializing AI Scanner", 0.15),
-        ("📄 Parsing Contract Structure", 0.30),
-        ("🧠 Analyzing Legal Language", 0.50),
-        ("🚨 Detecting Predatory Clauses", 0.70),
-        ("📊 Calculating Risk Score", 0.85),
-        ("✅ Generating Report", 1.0)
-    ]
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for stage_text, progress_val in stages:
-        status_text.markdown(f"### {stage_text}")
-        progress_bar.progress(progress_val)
-        time.sleep(0.5)
-    
-    status_text.empty()
-    progress_bar.empty()
- 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN UI FLOW
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Hero Section
 st.markdown("""
 <div style='text-align: center; padding: 2rem 0 1rem 0;'>
     <h1 style='font-size: 3rem; margin: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
@@ -295,7 +360,8 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
- 
+
+# Sidebar
 with st.sidebar:
     st.markdown("## 🎯 Quick Start")
     user_id, user_type = get_user_id()
@@ -322,79 +388,84 @@ with st.sidebar:
     st.markdown("Need more scans or unlimited pages?")
     
     if st.button("View Pro Plans →", use_container_width=True):
-        st.info("Upgrade feature coming soon!")
+        st.switch_page("pages/signup.py")
     
     st.markdown("---")
     st.caption("🔒 Privacy: Data analyzed in memory, immediately discarded")
- 
+
+# Main Content
 st.markdown("### 📄 Upload PDF Contract")
- 
+
 uploaded_file = st.file_uploader(
     "Upload a PDF contract (or paste text below)",
     type=['pdf'],
-    help="Upload any contract, Terms of Service, or legal agreement as a PDF"
+    help=f"Maximum file size: {MAX_FILE_SIZE_MB}MB"
 )
- 
+
 if uploaded_file:
     try:
         user_id, _ = get_user_id()
-        allowed, remaining, _, tier = check_rate_limit(user_id, "analysis")
-        tier_info = get_tier_info(tier)
-        max_pages = tier_info['max_pages']
+        _, _, _, tier = check_rate_limit(user_id, "analysis")
+        
+        # Validate upload
+        is_valid, error_msg = validate_pdf_upload(uploaded_file, tier)
+        
+        if not is_valid:
+            st.error(f"🚫 **Upload Error**: {error_msg}")
+            
+            if "plan allows" in error_msg:
+                st.info("💡 **Tip**: Upgrade to Pro for unlimited page processing")
+                if st.button("View Pro Plans"):
+                    st.switch_page("pages/signup.py")
+            
+            st.stop()
+        
+        # Extract text
+        with st.spinner("📄 Extracting text from PDF..."):
+            extracted_text, extract_error = extract_pdf_text(uploaded_file, tier)
+        
+        if extract_error:
+            st.error(f"❌ {extract_error}")
+            st.stop()
+        
+        st.session_state.contract_text = extracted_text
+        st.session_state.demo_active = False
+        st.session_state.analysis_complete = False
         
         with pdfplumber.open(uploaded_file) as pdf:
             page_count = len(pdf.pages)
-            
-            if max_pages != -1 and page_count > max_pages:
-                st.error(f"""
-                🚫 **Page Limit Exceeded**
-                
-                Your {tier_info['name']} plan allows {max_pages} pages, but this PDF has {page_count} pages.
-                """)
-                st.stop()
-            
-            text_parts = []
-            for page in pdf.pages[:max_pages if max_pages != -1 else None]:
-                text_parts.append(page.extract_text() or "")
-            
-            extracted_text = "\n\n".join(text_parts)
-            
-            max_chars = tier_info['max_text_chars']
-            if max_chars != -1 and len(extracted_text) > max_chars:
-                extracted_text = extracted_text[:max_chars]
-                st.warning(f"⚠️ Text truncated to {max_chars:,} characters")
-            
-            st.session_state.contract_text = extracted_text
-            st.session_state.demo_active = False
-            st.session_state.analysis_complete = False
-            
-            st.success(f"✅ Extracted {len(extracted_text):,} characters from {page_count} page(s)")
-            
+        
+        st.success(f"✅ Extracted {len(extracted_text):,} characters from {page_count} page(s)")
+        
     except Exception as e:
-        st.error(f"Error reading PDF: {e}")
- 
+        logger.error(f"PDF processing error: {e}")
+        st.error("❌ **PDF Processing Error** - Please try a different file or contact support")
+        
+        if TELEMETRY_AVAILABLE:
+            log_error_telemetry("pdf_processing", str(e), user_id)
+
 st.markdown("---")
- 
+
 contract_text = st.text_area(
     "Or paste your contract text here",
     value=st.session_state.contract_text,
     height=300,
     placeholder="Paste any TOS, contract, or legal agreement...",
 )
- 
+
 if contract_text != st.session_state.contract_text:
     st.session_state.contract_text = contract_text
     st.session_state.demo_active = False
     st.session_state.analysis_complete = False
- 
+
 st.markdown("---")
- 
+
 agreed = st.checkbox(
     "I understand Lexrisk is an AI tool and not a substitute for professional legal advice."
 )
- 
+
 col1, col2, col3 = st.columns([1, 1, 2])
- 
+
 with col1:
     analyze_btn = st.button(
         "🔍 Analyze", 
@@ -402,7 +473,7 @@ with col1:
         use_container_width=True, 
         disabled=not agreed
     )
- 
+
 with col2:
     if st.session_state.analysis_complete and st.session_state.last_analysis_result:
         toggle_view = st.button(
@@ -413,24 +484,33 @@ with col2:
         if toggle_view:
             st.session_state.show_redlined_view = not st.session_state.show_redlined_view
             st.rerun()
- 
+
 if not agreed:
     st.info("💡 Please check the box above to enable the analysis.")
- 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ANALYSIS EXECUTION (WITH GRACEFUL ERROR HANDLING)
+# ══════════════════════════════════════════════════════════════════════════════
+
 if analyze_btn and st.session_state.contract_text.strip():
     start_time = time.time()
     was_cached = False
+    result_dict = None
     
     try:
         user_id, user_type = get_user_id()
         allowed, remaining, reset_time, tier = check_rate_limit(user_id, "analysis")
         
+        # Check rate limit
         if not allowed and RATE_LIMITER_AVAILABLE:
-            st.error(f"🛑 **Daily Scan Limit Reached**")
+            st.error("🛑 **Daily Scan Limit Reached**")
+            st.info("Upgrade to Pro for 50 scans per day")
             st.stop()
         
+        # Demo mode handling
         if st.session_state.demo_active and DEMOS_AVAILABLE:
-            show_analysis_progress()
+            with st.spinner("🔍 Analyzing demo contract..."):
+                time.sleep(1)  # Simulate processing
             
             demo_match = next((d['analysis'] for d in DEMOS.values() 
                              if d['text'] == st.session_state.contract_text), None)
@@ -442,6 +522,7 @@ if analyze_btn and st.session_state.contract_text.strip():
             else:
                 st.session_state.demo_active = False
         
+        # Database cache check
         contract_hash = None
         if not st.session_state.demo_active and DB_AVAILABLE:
             contract_hash = get_contract_hash(st.session_state.contract_text)
@@ -450,35 +531,52 @@ if analyze_btn and st.session_state.contract_text.strip():
             if cached_result:
                 result_dict = cached_result['analysis_result']
                 was_cached = True
-                st.markdown('<p class="cache-badge">⚡ INSTANT: Cached Result</p>', 
-                          unsafe_allow_html=True)
+                st.success("⚡ **INSTANT**: Cached Result")
         
+        # Live analysis with circuit breaker
         if not was_cached and not st.session_state.demo_active:
-            show_analysis_progress()
+            with st.spinner("🔍 Analyzing contract with AI..."):
+                result_dict = analyze_with_circuit_breaker(
+                    st.session_state.contract_text,
+                    user_id
+                )
             
-            # ✅ FIXED: OpenAI for long contracts
-            text_length = len(st.session_state.contract_text)
-            provider = "openai" if text_length > 4500 else "groq"
-            
-            result_dict = analyze_contract_cached(st.session_state.contract_text, provider)
-            
+            # Cache the result
             if DB_AVAILABLE and contract_hash:
                 cache_analysis(
                     contract_hash,
-                    text_length,
+                    len(st.session_state.contract_text),
                     result_dict['risk_score'],
                     result_dict['risk_level'],
                     result_dict,
-                    result_dict['engine_used']
+                    result_dict.get('engine_used', 'unknown')
                 )
         
+        # Calculate metrics
         processing_time_ms = int((time.time() - start_time) * 1000)
         
+        # Increment usage
         if not was_cached and RATE_LIMITER_AVAILABLE:
             page_count = st.session_state.contract_text.count('\n\n') // 50 + 1
             increment_usage(user_id, "analysis", pages=page_count, 
                           text_chars=len(st.session_state.contract_text))
         
+        # Log telemetry
+        if TELEMETRY_AVAILABLE:
+            log_analysis_telemetry(
+                user_id=user_id,
+                contract_length=len(st.session_state.contract_text),
+                risk_score=result_dict['risk_score'],
+                risk_level=result_dict['risk_level'],
+                engine_used=result_dict.get('_provider_used', result_dict.get('engine_used', 'unknown')),
+                was_cached=was_cached,
+                processing_time_ms=processing_time_ms,
+                contract_type=result_dict.get('contract_type', 'unknown'),
+                breaker_state=result_dict.get('_breaker_state', 'n/a'),
+                was_failover=result_dict.get('_failover', False)
+            )
+        
+        # Log to database
         if DB_AVAILABLE and contract_hash:
             page_count = st.session_state.contract_text.count('\n\n') // 50 + 1
             log_analysis(
@@ -488,7 +586,7 @@ if analyze_btn and st.session_state.contract_text.strip():
                 page_count,
                 result_dict['risk_score'],
                 result_dict['risk_level'],
-                result_dict['engine_used'],
+                result_dict.get('engine_used', 'unknown'),
                 was_cached,
                 processing_time_ms
             )
@@ -501,16 +599,55 @@ if analyze_btn and st.session_state.contract_text.strip():
                     contract_hash
                 )
         
+        # Store result and trigger rerun
         st.session_state.last_analysis_result = result_dict
         st.session_state.analysis_complete = True
+        st.session_state.api_error_count = 0  # Reset error counter on success
         st.rerun()
         
+    except CircuitBreakerOpen as e:
+        # Circuit breaker is open - show maintenance message
+        logger.error(f"Circuit breaker prevented request: {e}")
+        
+        st.markdown("""
+        <div class="warning-banner">
+            <h3 style="margin: 0;">⚠️ System Maintenance</h3>
+            <p style="margin: 0.5rem 0;">
+                LexRisk is currently processing an unusually high volume of contracts.
+                Please try again in a few moments.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if TELEMETRY_AVAILABLE:
+            log_error_telemetry("circuit_breaker_open", str(e), user_id)
+        
     except Exception as e:
-        st.error(f"Analysis failed: {e}")
-        import traceback
-        st.code(traceback.format_exc())
-        logger.error(f"Analysis error: {traceback.format_exc()}")
- 
+        # Catch-all for any other errors
+        logger.error(f"Analysis error: {e}", exc_info=True)
+        
+        st.session_state.api_error_count += 1
+        
+        # Show branded error message (NO PYTHON TRACEBACK)
+        st.markdown("""
+        <div class="error-banner">
+            <h3 style="margin: 0;">⚠️ Temporary Service Interruption</h3>
+            <p style="margin: 0.5rem 0;">
+                We're experiencing high demand. Your request couldn't be processed
+                at this moment. Please try again shortly.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.info("💡 **Tip**: If this persists, try a shorter contract excerpt or contact support")
+        
+        if TELEMETRY_AVAILABLE:
+            log_error_telemetry("analysis_failure", str(e), user_id)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RESULTS DISPLAY
+# ══════════════════════════════════════════════════════════════════════════════
+
 if st.session_state.analysis_complete and st.session_state.last_analysis_result:
     result = st.session_state.last_analysis_result
     
@@ -519,54 +656,30 @@ if st.session_state.analysis_complete and st.session_state.last_analysis_result:
     if not st.session_state.show_redlined_view:
         st.markdown("## 📊 Analysis Results")
         
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            gauge_fig = create_risk_gauge(result['risk_score'])
-            st.plotly_chart(gauge_fig, use_container_width=True)
-        
-        with col2:
-            st.markdown("### Key Metrics")
-            risk_class = f"risk-{result['risk_level'].lower()}"
-            st.markdown(f'<p class="{risk_class}">{result["risk_level"]}</p>', 
-                       unsafe_allow_html=True)
-            
-            st.metric("Risk Score", f"{result['risk_score']}/100")
-            st.metric("Flagged Clauses", len(result['flagged_clauses']))
-            
-            rec_emoji = {"SIGN": "✅", "NEGOTIATE": "⚠️", "AVOID": "🚫"}.get(
-                result['recommendation'], "❓")
-            st.metric("Recommendation", f"{rec_emoji} {result['recommendation']}")
-        
-        st.progress(result['risk_score'] / 100)
-        
-        st.markdown("### 📝 Executive Summary")
-        st.info(result['summary'])
-        
-        if result['flagged_clauses']:
-            st.divider()
-            st.markdown(f"### 🚨 {len(result['flagged_clauses'])} Flagged Clause(s)")
-            
-            for i, clause in enumerate(result['flagged_clauses'], 1):
-                severity_color = {
-                    'LOW': '🟢',
-                    'MEDIUM': '🟡', 
-                    'HIGH': '🟠',
-                    'CRITICAL': '🔴'
-                }.get(clause['severity'], '⚪')
-                
-                with st.expander(f"{severity_color} {i}. {clause['category']} — {clause['severity']}"):
-                    st.markdown("**📋 Clause Text:**")
-                    st.code(clause['clause_text'], language=None)
-                    st.markdown(f"**💬 Plain English:** {clause['plain_english']}")
-                    st.markdown(f"**⚠️ Red Flag:** {clause['red_flag']}")
+        # Use modular views if available
+        if VIEWS_AVAILABLE:
+            render_risk_gauge(result)
+            render_flagged_clauses(result)
         else:
-            st.success("✅ No predatory clauses detected!")
+            # Fallback inline display
+            st.metric("Risk Score", f"{result['risk_score']}/100")
+            st.progress(result['risk_score'] / 100)
+            
+            st.markdown("### 📝 Summary")
+            st.info(result['summary'])
+            
+            if result['flagged_clauses']:
+                st.markdown(f"### 🚨 {len(result['flagged_clauses'])} Flagged Clause(s)")
+                for i, clause in enumerate(result['flagged_clauses'], 1):
+                    with st.expander(f"{i}. {clause['category']} — {clause['severity']}"):
+                        st.code(clause['clause_text'], language=None)
+                        st.markdown(f"**Plain English:** {clause['plain_english']}")
         
         legal_text = result.get('disclaimer', "This analysis is for informational purposes only.")
         st.warning(f"⚖️ **Legal Notice:** {legal_text}")
         
     else:
+        # Redlined view
         st.markdown("## 🎨 Redlined Contract View")
         summary_html = get_redlining_summary(result['flagged_clauses'])
         st.markdown(summary_html, unsafe_allow_html=True)
@@ -576,11 +689,11 @@ if st.session_state.analysis_complete and st.session_state.last_analysis_result:
             result['flagged_clauses']
         )
         st.markdown(redlined_html, unsafe_allow_html=True)
- 
+
 st.divider()
 st.caption("🔒 **Privacy:** Data is analyzed in memory and immediately discarded.")
 st.caption("⚖️ **Legal:** Lexrisk is an AI tool, not a law firm. No legal advice provided.")
- 
+
 st.markdown('''
 <div style='text-align: center; color: #666; font-size: 0.75rem; padding: 2rem 0;'>
     <p><strong>LEXRISK</strong> by Babylon Technologies</p>
