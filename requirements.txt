@@ -1,41 +1,30 @@
-# ══════════════════════════════════════════════════════════════════════════════
-# LexRisk v2.0 Requirements
-# Enhanced with SQL tracking, caching, and visual redlining
-# ══════════════════════════════════════════════════════════════════════════════
+# LexRisk Production Requirements
+# Python 3.11+
 
-# ── Core App ─────────────────────────────────────────────────────────────────
-streamlit==1.35.0
-python-dotenv==1.0.1
+# Core Framework
+streamlit>=1.35.0
 
-# ── AI / LLM ─────────────────────────────────────────────────────────────────
-groq==0.9.0
-openai>=1.12.0
-google-generativeai>=0.3.0
-# ── PDF Processing ───────────────────────────────────────────────────────────
-pypdf2==3.0.1
-pdfplumber==0.11.0                 # More accurate text extraction
+# LLM APIs
+groq>=0.9.0
+openai>=1.30.0
 
-# ── Database ─────────────────────────────────────────────────────────────────
-psycopg2-binary==2.9.9             # PostgreSQL adapter
-# Note: Use psycopg2-binary for simplicity, or psycopg2 with pg_config for production
+# PDF Processing
+pdfplumber>=0.10.0
 
-# ── Visualization ────────────────────────────────────────────────────────────
-plotly==5.22.0                     # Interactive charts and gauges
+# Database
+psycopg2-binary>=2.9.9
+python-dotenv>=1.0.0
 
-# ── NLP / Similarity (REMOVED to save memory) ────────────────────────────────
-# sentence-transformers==3.0.1     # REMOVED: Local model uses ~500MB RAM
-# scikit-learn==1.5.0              # REMOVED: Not needed without sentence-transformers
-# numpy==1.26.4                    # REMOVED: Heavy dependency
+# Visualization
+plotly>=5.18.0
 
-# Instead, we rely on:
-# - LLM-based semantic analysis (already in Groq/Gemini)
-# - Simple fuzzy matching for redlining (no ML needed)
-# This reduces memory footprint from ~800MB to <200MB
+# Utilities
+requests>=2.31.0
 
-# ── Testing ───────────────────────────────────────────────────────────────────
-pytest==8.2.2
-pytest-cov==5.0.0
-
+# Development/Testing (optional)
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.1.0
 # ── Dev Utilities ─────────────────────────────────────────────────────────────
 black==24.4.2                      # Code formatter
 ruff==0.4.9                        # Fast linter
