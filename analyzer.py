@@ -2,6 +2,7 @@
 analyzer.py
 FIXED: Replaced Gemini with OpenAI for long contracts
 Uses Groq (fast) for short, OpenAI (powerful) for long
+SYNTAX ERROR FIXED: Line 173 choose_engine method corrected
 """
 
 import logging
@@ -155,25 +156,25 @@ class ContractTypeDetector:
 class EngineRouter:
     """Routes to Groq (fast) or OpenAI (powerful for long/complex)"""
     
-@staticmethod
-def choose_engine(contract_text: str, contract_type: str) -> str:
-    """Routes to Groq (fast) or OpenAI (powerful for long/complex)"""
-    text_length = len(contract_text)
-    
-    # For long contracts, use OpenAI's more powerful model
-    if text_length > 15000:
-        logger.info(f"Routing to OPENAI: Long contract ({text_length} chars)")
-        return "openai"
-    
-    # For medium-length contracts or complex B2B/Employment, use OpenAI
-    elif text_length > 8000 or contract_type in ["b2b", "employment"]:
-        logger.info(f"Routing to OPENAI: {contract_type} contract ({text_length} chars)")
-        return "openai"
-    
-    # For short contracts, use Groq (fast)
-    else:
-        logger.info(f"Routing to GROQ: {contract_type} contract ({text_length} chars)")
-        return "groq"
+    @staticmethod
+    def choose_engine(contract_text: str, contract_type: str) -> str:
+        """Routes to Groq (fast) or OpenAI (powerful for long/complex)"""
+        text_length = len(contract_text)
+        
+        # For long contracts, use OpenAI's more powerful model
+        if text_length > 15000:
+            logger.info(f"Routing to OPENAI: Long contract ({text_length} chars)")
+            return "openai"
+        
+        # For medium-length contracts or complex B2B/Employment, use OpenAI
+        elif text_length > 8000 or contract_type in ["b2b", "employment"]:
+            logger.info(f"Routing to OPENAI: {contract_type} contract ({text_length} chars)")
+            return "openai"
+        
+        # For short contracts, use Groq (fast)
+        else:
+            logger.info(f"Routing to GROQ: {contract_type} contract ({text_length} chars)")
+            return "groq"
 
 # ── 5. Analyzer Engine ────────────────────────────────────────────────────────
 
