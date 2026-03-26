@@ -41,12 +41,22 @@ MAX_TEXT_CHARS_FREE = 100000  # ~100KB text
 MAX_TEXT_CHARS_PRO = 1000000  # ~1MB text
 
 # ── 4. Import Modules with Error Handling ──────────────────────────────────────
+# AFTER (FIXED):
 try:
     from circuit_breaker import get_openai_circuit_breaker, CircuitBreakerOpen
     CIRCUIT_BREAKER_AVAILABLE = True
 except ImportError:
     logger.warning("circuit_breaker.py not found - degraded mode")
     CIRCUIT_BREAKER_AVAILABLE = False
+    
+    # Define stub exception class for graceful degradation
+    class CircuitBreakerOpen(Exception):
+        """Fallback exception when circuit_breaker module unavailable"""
+        pass
+    
+    def get_openai_circuit_breaker():
+        """Fallback function that does nothing"""
+        return NoneFalse
 
 try:
     from analyzer import ClauseAnalyzer
