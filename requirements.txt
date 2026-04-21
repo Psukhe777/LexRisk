@@ -1,32 +1,109 @@
-# LexRisk Production Requirements
-# Python 3.11+
+# ══════════════════════════════════════════════════════════════════════════════
+# LEXRISK: Requirements.txt (Phases 1-5 Complete)
+# ══════════════════════════════════════════════════════════════════════════════
 
-# Core Framework
-streamlit>=1.35.0
-
-# LLM APIs
-groq>=0.9.0
-openai>=1.30.0
-
-# PDF Processing
+# ── Existing Dependencies (Baseline) ──
+streamlit>=1.28.0
 pdfplumber>=0.10.0
-
-# Database
-psycopg2-binary>=2.9.9
 python-dotenv>=1.0.0
+groq>=0.4.0
+openai>=1.12.0
 
-# Visualization
-plotly>=5.18.0
+# ── PHASE 1 ADDITIONS: NLP Vectorization ──
+sentence-transformers>=2.2.2
+scikit-learn>=1.3.0
+torch>=2.0.0  # Required by sentence-transformers (CPU version is fine)
+numpy>=1.24.0  # Usually included with scikit-learn, but listing explicitly
 
-# Utilities
-requests>=2.31.0
+# ── PHASE 2 ADDITIONS: OCR & Bulk Processing ──
+pytesseract>=0.3.10  # OCR text extraction
+pdf2image>=1.16.3    # PDF to image conversion for OCR
+Pillow>=10.0.0       # Image processing and preprocessing
 
-# Development/Testing (optional)
-pytest>=7.4.0
-black>=23.0.0
-flake8>=6.1.0
-# ── Dev Utilities ─────────────────────────────────────────────────────────────
-black==24.4.2                      # Code formatter
-ruff==0.4.9                        # Fast linter
+# ── PHASE 3: No new dependencies (uses Python standard library) ──
 
- 
+# ── PHASE 4 ADDITIONS: Interactive UI & Benchmarking ──
+plotly>=5.18.0       # Radar chart visualization for competitor benchmarking
+
+# ── PHASE 5 ADDITIONS: Enterprise Export Pipelines ──
+resend>=0.8.0        # Email delivery via Resend API
+reportlab>=4.0.0     # Professional PDF report generation
+
+# ── Optional: For faster CPU inference ──
+# Install CPU-only torch to save space (400MB vs 2GB):
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# ── Development & Testing ──
+pytest>=7.4.0  # For running test suite
+black>=23.0.0  # Code formatting
+mypy>=1.5.0    # Type checking
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INSTALLATION NOTES
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Quick install (all phases):
+#   pip install -r requirements.txt
+
+# For CPU-only torch (smaller install):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install sentence-transformers scikit-learn numpy
+
+# PHASE 2 SYSTEM DEPENDENCIES (REQUIRED):
+# ========================================
+
+# 1. Tesseract OCR:
+#    - Ubuntu/Debian: sudo apt-get install tesseract-ocr tesseract-ocr-eng
+#    - macOS: brew install tesseract
+#    - Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
+
+# 2. Poppler (for pdf2image):
+#    - Ubuntu/Debian: sudo apt-get install poppler-utils
+#    - macOS: brew install poppler
+#    - Windows: Download from http://blog.alivate.com.au/poppler-windows/
+
+# Verify Phase 1 installation:
+#   python -c "from sentence_transformers import SentenceTransformer; print('Phase 1 OK')"
+
+# Verify Phase 2 installation:
+#   python -c "from ocr_processor import get_ocr_status_message; print(get_ocr_status_message())"
+
+# First-run downloads (one-time):
+#   - sentence-transformers model (~80MB) downloads on first use
+#   - Cached locally for future runs
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DOCKER DEPLOYMENT
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Dockerfile snippet for Phase 2:
+# 
+# FROM python:3.10-slim
+# 
+# # Install system dependencies
+# RUN apt-get update && apt-get install -y \
+#     tesseract-ocr \
+#     tesseract-ocr-eng \
+#     poppler-utils \
+#     && rm -rf /var/lib/apt/lists/*
+# 
+# # Install Python packages
+# COPY requirements.txt .
+# RUN pip install --no-cache-dir -r requirements.txt
+# 
+# # Pre-download sentence-transformers model
+# RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PRODUCTION OPTIMIZATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+# For production deployments, consider:
+# 1. Pre-download models during Docker build (see above)
+# 2. Mount persistent cache volume for models
+# 3. Use torch.set_num_threads(4) to limit CPU usage
+# 4. Enable model quantization for faster inference:
+#    model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+#    model.half()  # FP16 precision (2x faster, minimal accuracy loss)
+# 5. Configure tesseract for parallel OCR:
+#    export OMP_THREAD_LIMIT=4  # Limit OCR threads
