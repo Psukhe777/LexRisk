@@ -680,9 +680,14 @@ def render_sidebar(user_id: str, selected_jurisdiction_name: str) -> tuple[str, 
             help="Select the governing legal context before running analysis.",
         )
 
-        selected_jurisdiction = resolve_jurisdiction(selected_jurisdiction_name)
+       selected_jurisdiction = resolve_jurisdiction(selected_jurisdiction_name)
         profile = get_jurisdiction_profile(selected_jurisdiction)
-        st.caption(profile.description)
+        
+        # Safe attribute extraction
+        if profile and hasattr(profile, 'description'):
+            st.caption(profile.description)
+        else:
+            st.caption(f"Governing Ruleset: {selected_jurisdiction.value.title()}")
 
         get_or_create_user(user_id)
         allowed, remaining, tier = check_rate_limit(user_id, "analysis")
