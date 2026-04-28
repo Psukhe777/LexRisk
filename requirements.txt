@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# LEXRISK: Requirements.txt (Phases 1-5 Complete)
+# LEXRISK: Requirements.txt (Phases 1-5 Complete + v2.0 DB)
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Existing Dependencies (Baseline) ──
@@ -28,6 +28,9 @@ plotly>=5.18.0       # Radar chart visualization for competitor benchmarking
 # ── PHASE 5 ADDITIONS: Enterprise Export Pipelines ──
 resend>=0.8.0        # Email delivery via Resend API
 reportlab>=4.0.0     # Professional PDF report generation
+
+# ── v2.0 ADDITIONS: Database ──
+psycopg2-binary==2.9.9  # Required for Streamlit Cloud PostgreSQL connection
 
 # ── Optional: For faster CPU inference ──
 # Install CPU-only torch to save space (400MB vs 2GB):
