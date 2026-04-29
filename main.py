@@ -182,19 +182,170 @@ def normalize_for_storage(value: Any) -> Any:
     return value
 
 
+def unwrap_tuple_like(value: Any) -> Any:
+    """Collapse singleton tuple/list wrappers that leak out of helper functions."""
+    while isinstance(value, (tuple, list)) and len(value) == 1:
+        value = value[0]
+    return value
+
+
 def resolve_jurisdiction(value: Any) -> Jurisdiction:
+    value = unwrap_tuple_like(value)
+
     if isinstance(value, Jurisdiction):
         return value
+
+    if isinstance(value, dict):
+        for key in ("jurisdiction", "value", "display_name", "name"):
+            if key in value:
+                return resolve_jurisdiction(value.get(key))
+
+    if hasattr(value, "jurisdiction"):
+        return resolve_jurisdiction(getattr(value, "jurisdiction", None))
+
+    if isinstance(value, (tuple, list)):
+        for item in value:
+            resolved = resolve_jurisdiction(item)
+            if isinstance(resolved, Jurisdiction):
+                return resolved
 
     if isinstance(value, str):
         try:
             return Jurisdiction(value.lower())
         except Exception:
             by_name = get_jurisdiction_by_name(value)
-            if by_name:
+            if isinstance(by_name, Jurisdiction):
                 return by_name
+            if by_name:
+                return resolve_jurisdiction(by_name)
 
     return Jurisdiction.FEDERAL
+
+
+def get_jurisdiction_value(value: Any, default: str = "federal") -> str:
+    resolved = resolve_jurisdiction(value)
+    return getattr(resolved, "value", default) or default
+
+
+def get_safe_jurisdiction_profile(value: Any) -> Any:
+    candidate = unwrap_tuple_like(value)
+
+    if hasattr(candidate, "display_name") or hasattr(candidate, "description"):
+        return candidate
+
+    if isinstance(candidate, dict) and (
+        "display_name" in candidate or "description" in candidate
+    ):
+        return candidate
+
+    try:
+        profile = unwrap_tuple_like(get_jurisdiction_profile(resolve_jurisdiction(candidate)))
+    except Exception as exc:
+        logger.warning("Jurisdiction profile lookup degraded gracefully: %s", exc)
+        return None
+
+    if hasattr(profile, "display_name") or hasattr(profile, "description"):
+        return profile
+
+    if isinstance(profile, dict):
+        return profile
+
+    if isinstance(profile, (tuple, list)):
+        for item in profile:
+            item = unwrap_tuple_like(item)
+            if hasattr(item, "display_name") or hasattr(item, "description"):
+                return item
+            if isinstance(item, dict):
+                return item
+
+    return None
+
+
+def get_profile_attr(profile: Any, attr_name: str, fallback: str) -> str:
+    profile = unwrap_tuple_like(profile)
+
+    if hasattr(profile, attr_name):
+        value = getattr(profile, attr_name, fallback)
+        return str(value) if value is not None else fallback
+
+    if isinstance(profile, dict):
+        value = profile.get(attr_name, fallback)
+        return str(value) if value is not None else fallback
+
+    return fallback
+
+
+def get_safe_jurisdiction_display_names() -> list[str]:
+    try:
+        raw_names = get_jurisdiction_display_names()
+    except Exception as exc:
+        logger.warning("Jurisdiction display names degraded gracefully: %s", exc)
+        raw_names = []
+
+    normalized_names: list[str] = []
+
+    for item in raw_names or []:
+        item = unwrap_tuple_like(item)
+
+        if isinstance(item, str):
+            normalized_names.append(item)
+            continue
+
+        if hasattr(item, "display_name"):
+            normalized_names.append(str(getattr(item, "display_name")))
+            continue
+
+        if isinstance(item, dict) and item.get("display_name"):
+            normalized_names.append(str(item["display_name"]))
+            continue
+
+        if isinstance(item, Jurisdiction):
+            normalized_names.append(get_jurisdiction_value(item).title())
+            continue
+
+        if isinstance(item, (tuple, list)):
+            for nested in item:
+                nested = unwrap_tuple_like(nested)
+                if isinstance(nested, str):
+                    normalized_names.append(nested)
+                    break
+                if hasattr(nested, "display_name"):
+                    normalized_names.append(str(getattr(nested, "display_name")))
+                    break
+                if isinstance(nested, dict) and nested.get("display_name"):
+                    normalized_names.append(str(nested["display_name"]))
+                    break
+                if isinstance(nested, Jurisdiction):
+                    normalized_names.append(get_jurisdiction_value(nested).title())
+                    break
+
+    return normalized_names or ["Federal"]
+
+
+def get_safe_required_disclosures(value: Any) -> list[str]:
+    try:
+        disclosures = get_required_disclosures(resolve_jurisdiction(value))
+    except Exception as exc:
+        logger.warning("Required disclosures degraded gracefully: %s", exc)
+        return []
+
+    if isinstance(disclosures, (tuple, list)):
+        return [str(item) for item in disclosures]
+
+    return [str(disclosures)] if disclosures else []
+
+
+def get_safe_missing_disclosures(contract_text: str, value: Any) -> list[str]:
+    try:
+        missing = check_missing_disclosures(contract_text, resolve_jurisdiction(value))
+    except Exception as exc:
+        logger.warning("Missing disclosure check degraded gracefully: %s", exc)
+        return []
+
+    if isinstance(missing, (tuple, list)):
+        return [str(item) for item in missing]
+
+    return [str(missing)] if missing else []
 
 
 def hydrate_analysis_result(payload: Dict[str, Any]) -> AnalysisResult:
@@ -235,7 +386,7 @@ def get_api_keys() -> Tuple[Optional[str], Optional[str]]:
 
 
 def get_contract_cache_key(contract_text: str, jurisdiction: Jurisdiction) -> str:
-    return get_contract_hash(f"{jurisdiction.value}::{contract_text}")
+    return get_contract_hash(f"{get_jurisdiction_value(jurisdiction)}::{contract_text}")
 
 
 def validate_pdf_upload(uploaded_file, tier: str) -> tuple[bool, Optional[str]]:
@@ -438,9 +589,9 @@ def render_summary_tab(
     result_dict: Dict[str, Any],
     contract_text: str,
 ) -> None:
-    jurisdiction = result.jurisdiction or Jurisdiction.FEDERAL
-    profile = get_jurisdiction_profile(jurisdiction)
-    missing_disclosures = check_missing_disclosures(contract_text, jurisdiction)
+    jurisdiction = resolve_jurisdiction(getattr(result, "jurisdiction", None))
+    profile = get_safe_jurisdiction_profile(jurisdiction)
+    missing_disclosures = get_safe_missing_disclosures(contract_text, jurisdiction)
 
     metric_1, metric_2, metric_3, metric_4 = st.columns(4)
     metric_1.metric("Risk Score", f"{result.risk_score}/100")
@@ -472,11 +623,23 @@ def render_summary_tab(
 
     with insight_2:
         st.subheader("Jurisdiction Profile")
-        st.write(profile.display_name)
-        st.caption(profile.description)
+        st.write(
+            get_profile_attr(
+                profile,
+                "display_name",
+                f"{get_jurisdiction_value(jurisdiction).title()} ruleset",
+            )
+        )
+        st.caption(
+            get_profile_attr(
+                profile,
+                "description",
+                f"Governing Ruleset: {get_jurisdiction_value(jurisdiction).title()}",
+            )
+        )
 
         st.markdown("**Required Disclosures**")
-        for disclosure in get_required_disclosures(jurisdiction):
+        for disclosure in get_safe_required_disclosures(jurisdiction):
             st.write(f"• {disclosure}")
 
         st.markdown("**Missing Disclosures**")
@@ -524,7 +687,7 @@ def render_liability_tab(
 
     liability_report = calculate_liability_cached(
         result_dict["flagged_clauses"],
-        (result.jurisdiction or Jurisdiction.FEDERAL).value,
+        get_jurisdiction_value(getattr(result, "jurisdiction", None)),
         result.contract_type,
         int(st.session_state.affected_users),
     )
@@ -662,7 +825,7 @@ def build_export_payload(
     payload = normalize_for_storage(result)
     payload["liability_report"] = liability_report
     payload["benchmark_report"] = benchmark_report
-    payload["jurisdiction"] = (result.jurisdiction or Jurisdiction.FEDERAL).value
+    payload["jurisdiction"] = get_jurisdiction_value(getattr(result, "jurisdiction", None))
     return payload
 
 
@@ -670,7 +833,7 @@ def render_sidebar(user_id: str, selected_jurisdiction_name: str) -> tuple[str, 
     with st.sidebar:
         st.markdown("## Analysis Controls")
 
-        jurisdiction_names = get_jurisdiction_display_names()
+        jurisdiction_names = get_safe_jurisdiction_display_names()
         selected_jurisdiction_name = st.selectbox(
             "Legal Jurisdiction",
             jurisdiction_names,
@@ -680,14 +843,15 @@ def render_sidebar(user_id: str, selected_jurisdiction_name: str) -> tuple[str, 
             help="Select the governing legal context before running analysis.",
         )
 
-       selected_jurisdiction = resolve_jurisdiction(selected_jurisdiction_name)
-        profile = get_jurisdiction_profile(selected_jurisdiction)
-        
-        # Safe attribute extraction
-        if profile and hasattr(profile, 'description'):
-            st.caption(profile.description)
-        else:
-            st.caption(f"Governing Ruleset: {selected_jurisdiction.value.title()}")
+        selected_jurisdiction = resolve_jurisdiction(selected_jurisdiction_name)
+        profile = get_safe_jurisdiction_profile(selected_jurisdiction)
+        st.caption(
+            get_profile_attr(
+                profile,
+                "description",
+                f"Governing Ruleset: {get_jurisdiction_value(selected_jurisdiction).title()}",
+            )
+        )
 
         get_or_create_user(user_id)
         allowed, remaining, tier = check_rate_limit(user_id, "analysis")
@@ -715,7 +879,7 @@ def render_sidebar(user_id: str, selected_jurisdiction_name: str) -> tuple[str, 
 
         st.markdown("---")
         st.markdown("**Required disclosure checklist**")
-        for disclosure in get_required_disclosures(selected_jurisdiction):
+        for disclosure in get_safe_required_disclosures(selected_jurisdiction):
             st.write(f"• {disclosure}")
 
         st.markdown("---")
@@ -758,7 +922,7 @@ init_session_state()
 current_user_id = get_user_id()
 stored_jurisdiction_name = st.session_state.get(
     "selected_jurisdiction_name",
-    get_jurisdiction_display_names()[0],
+    get_safe_jurisdiction_display_names()[0],
 )
 selected_jurisdiction_name, current_tier = render_sidebar(
     current_user_id,
@@ -956,8 +1120,8 @@ if st.session_state.analysis_complete and st.session_state.last_analysis_result:
     result: AnalysisResult = st.session_state.last_analysis_result
     result_dict = normalize_for_storage(result)
 
-    active_result_jurisdiction = (result.jurisdiction or Jurisdiction.FEDERAL).value
-    selected_jurisdiction_value = resolve_jurisdiction(selected_jurisdiction_name).value
+    active_result_jurisdiction = get_jurisdiction_value(getattr(result, "jurisdiction", None))
+    selected_jurisdiction_value = get_jurisdiction_value(selected_jurisdiction_name)
     if active_result_jurisdiction != selected_jurisdiction_value:
         st.info(
             "The sidebar jurisdiction has changed since the last run. "
