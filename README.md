@@ -1,61 +1,107 @@
-# 🏛️ Lexrisk AI-Powered Contract Intelligence 
+# LexRisk
 
- 🚧 Launch 02/23/26
+**Contract Risk Intelligence**
 
-> **"Nobody reads the Terms of Service. Until now."**
+LexRisk scans, parses, and analyzes legal contracts and Terms of Service 
+documents using a multi-layer AI pipeline — flagging liability exposure, 
+predatory clauses, TCPA compliance issues, and jurisdiction-specific risk 
+before you sign.
 
-RiskLex is an AI-driven legal analysis engine that scans, parses, and translates complex Terms of Service (ToS) and enterprise contracts into plain English. It instantly flags predatory clauses, data-harvesting policies, and hidden liabilities using advanced LLM reasoning.
-
-🚀 **Status:** Beta is live. Part of the **"6 Startups in 60 Days"** Challenge.
+Built for individuals, freelancers, and businesses who sign contracts 
+they cannot afford to have reviewed by an attorney at $300/hour.
 
 ---
 
-## ⚡ Beta is live at https://lexrisk.streamlit.app/
-Built for extreme speed and accuracy, RiskLex bypasses traditional week-long product validation cycles. By Day 5, we have achieved:
-1. **Synthetic Market Validation:** Utilizing AI personas to run 10-minute multi-agent stress tests on the core logic.
-2. **Cloud Deployment:** Live continuous integration via Streamlit Community Cloud.
-3. **Core Engine Locked:** Full integration of Llama-3-70B for zero-latency legal parsing.
+## What It Does
 
-## 🛠️ The Tech Stack
-RiskLex is built on a modern, high-speed Python architecture optimized for immediate deployment.
+- **Risk Scoring** — Overall risk score out of 100 with clause-level 
+  breakdown
+- **Predatory Clause Detection** — Auto-renewal traps, data-selling 
+  provisions, liability waivers, indemnification exposure
+- **Jurisdictional Analysis** — Rule engine covers Federal baseline plus 
+  state-specific variations
+- **Liability Calculation** — Quantified exposure estimates per flagged 
+  clause
+- **Clause Rewriting** — Generates compliant alternative language for 
+  high-risk provisions
+- **Contract Redlining** — Tracked changes output for negotiation
+- **Bulk Processing** — Batch analysis for teams reviewing multiple 
+  contracts
+- **PDF Export** — Structured risk report generation
+- **Attorney Routing** — Email routing for escalation to legal counsel
 
-* **Frontend & Hosting:** Streamlit (v1.35.0) for rapid UI iteration and Community Cloud deployment.
-* **The "Brain" (LLM):** Groq API powering **Llama-3-70B** for lightning-fast, highly contextual contract reasoning.
-* **Document Processing:** `pypdf2` and `pdfplumber` for robust text extraction from complex legal PDFs.
-* **NLP & Vectorization:** `sentence-transformers` and `scikit-learn` for semantic chunking and clause matching.
-* **Testing:** `pytest` for integration and unit testing of the API logic.
+---
 
-## ⚙️ Core Features
-* **Predatory Clause Detection:** Automatically identifies and scores high-risk language (e.g., auto-renewals, data selling, liability waivers).
-* **Risk Heatmap:** Generates an overall "Risk Score" out of 100 for any pasted text or uploaded document.
-* **Plain English Translation:** Strips away the legalese and explains exactly how a flagged clause impacts the user.
+## Tech Stack
 
-MIT License
+- **Frontend:** Streamlit with custom theming
+- **LLM:** Groq API — Llama-3-70B for contract reasoning
+- **NLP:** sentence-transformers, scikit-learn for semantic clause matching
+- **Document Processing:** pypdf2, pdfplumber for PDF extraction with 
+  OCR fallback
+- **Resilience:** Circuit breaker pattern, rate limiting, health checks
+- **Telemetry:** Usage analytics and performance monitoring
+- **Database:** PostgreSQL via Railway (schema in schema.sql)
+- **Testing:** pytest — unit and integration coverage
 
-Copyright (c) 2026 Nehemiah 
+---
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+## Architecture
+main.py → Entry point, jurisdiction resolution
+analyzer.py → Core analysis engine
+nlp_engine.py → Semantic clause matching
+jurisdictional_rules.py → Multi-jurisdiction rule engine
+liability_calculator.py → Exposure quantification
+clause_rewriter.py → Compliant language generation
+redliner.py → Contract redlining output
+bulk_processor.py → Batch processing
+ocr_processor.py → PDF text extraction
+pdf_export.py → Report generation
+email_router.py → Attorney escalation routing
+circuit_breaker.py → Fault tolerance
+rate_limiter.py → Usage control
+telemetry.py → Analytics
+health_check.py → System monitoring
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+---
 
+## Deployment
+
+Deployed on Railway. Connects to PostgreSQL for persistent storage.
+
+```bash
+# Local development
+pip install -r requirements.txt
+streamlit run main.py
+```
+
+Environment variables required — see `.env.example`.
+
+---
+
+## Status
+
+v2.0 live at [lexrisk.babylontechnologies.org](https://lexrisk.babylontechnologies.org)
+
+open source under MIT license. v2.0 is a proprietary commercial 
+release with tiered pricing.
+
+---
+
+## License
+
+v1.0: MIT License — see LICENSE file.
+
+v2.0 commercial features (bulk processing, attorney routing, redlining, 
+jurisdiction engine) are proprietary. Contact 
+nehemiahsturdivant@babylontechnologies.org for licensing.
+
+---
+
+**Disclaimer:** LexRisk is an AI analysis tool, not a substitute for 
+legal advice. Always consult a qualified attorney before making decisions 
+based on this analysis.
+
+Built by Nehemiah Sturdivant — Babylon Technologies LLC
 Made By Nehemiah// Babylon Technologies LLC 
-
-⚠️ **Disclaimer:** Lexrisk is an AI analysis tool, not a substitute for legal advice. 
-Results are generated by AI and may contain errors. Always consult a qualified attorney 
-before making decisions based on this analysis. By using this tool, you acknowledge that 
-Babylon Technologies provides this service "as is" without warranties.
-""")
