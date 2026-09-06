@@ -84,14 +84,16 @@ Environment variables required — see `.env.example`.
 
 v2.0 live at [lexrisk.babylontechnologies.org](https://lexrisk.babylontechnologies.org)
 
-open source under MIT license. v2.0 is a proprietary commercial 
+open source under MIT license.
+
+v2.0 is a proprietary commercial 
 release with tiered pricing.
 
 ---
 
 ## License
 
-v1.0: MIT License — see LICENSE file.
+: MIT License — see LICENSE file.
 
 v2.0 commercial features (bulk processing, attorney routing, redlining, 
 jurisdiction engine) are proprietary. Contact 
