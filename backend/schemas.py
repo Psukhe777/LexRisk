@@ -51,8 +51,18 @@ class AnalyzeResponse(BaseModel):
     meta: AnalysisMeta
 
 
+class TierLimits(BaseModel):
+    """Mirror of the tier_limits row. -1 means unlimited."""
+
+    daily_analyses: int
+    max_pages_per_pdf: int
+    max_text_chars: int
+    priority_processing: bool
+
+
 class UsageResponse(BaseModel):
     user_id: str
     tier: str
     allowed: bool
     remaining: int
+    limits: TierLimits

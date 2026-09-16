@@ -205,6 +205,47 @@ def upgrade_user_tier(user_id: str, new_tier: str) -> bool:
             return cur.rowcount > 0
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TIER LIMITS — the tier_limits table is the SINGLE SOURCE OF TRUTH.
+# Never reintroduce a hardcoded Python tier dict (see audit finding 5.3).
+# ══════════════════════════════════════════════════════════════════════════════
+
+UNLIMITED = -1
+
+# Used only when the database is unreachable, so a degraded API still enforces
+# the most restrictive tier rather than silently allowing everything.
+_FREE_TIER_FALLBACK = {
+    'tier': 'free',
+    'daily_analyses': 3,
+    'max_pages_per_pdf': 2,
+    'max_text_chars': 10000,
+    'priority_processing': False,
+}
+
+
+def get_tier_limits(tier: str = 'free') -> Dict[str, Any]:
+    """Read one tier's limits from tier_limits. Falls back to free tier values."""
+    with get_db_connection() as conn:
+        if conn is None:
+            return dict(_FREE_TIER_FALLBACK)
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT tier, daily_analyses, max_pages_per_pdf,
+                       max_text_chars, priority_processing
+                FROM tier_limits WHERE tier = %s;
+                """,
+                ((tier or 'free').lower(),)
+            )
+            result = cur.fetchone()
+
+            if result:
+                return dict(result)
+
+            logger.warning(f"Unknown tier '{tier}' - applying free tier limits")
+            return dict(_FREE_TIER_FALLBACK)
+
+# ══════════════════════════════════════════════════════════════════════════════
 # RATE LIMITING
 # ══════════════════════════════════════════════════════════════════════════════
 

@@ -52,6 +52,13 @@ def stub_pipeline(monkeypatch, fake_result):
 
     monkeypatch.setattr(analysis_service, "get_or_create_user", lambda *a, **k: True)
     monkeypatch.setattr(analysis_service, "check_rate_limit", lambda *a, **k: (True, 2, "free"))
+    monkeypatch.setattr(
+        analysis_service, "get_tier_limits",
+        lambda tier="free": {
+            "tier": tier, "daily_analyses": 3, "max_pages_per_pdf": 2,
+            "max_text_chars": 10000, "priority_processing": False,
+        },
+    )
     monkeypatch.setattr(analysis_service, "get_cached_analysis", lambda h: calls["cached"])
     monkeypatch.setattr(analysis_service, "cache_analysis", lambda *a, **k: True)
     monkeypatch.setattr(
@@ -156,10 +163,60 @@ def test_usage_endpoint(client, monkeypatch):
     import backend.routers.analysis as analysis_router
 
     monkeypatch.setattr(analysis_router, "check_rate_limit", lambda *a, **k: (True, 3, "free"))
+    monkeypatch.setattr(
+        analysis_router, "get_tier_limits",
+        lambda tier="free": {
+            "tier": "free", "daily_analyses": 3, "max_pages_per_pdf": 2,
+            "max_text_chars": 10000, "priority_processing": False,
+        },
+    )
     response = client.get("/api/v1/usage", headers={"X-User-Id": "u1"})
 
     assert response.status_code == 200
-    assert response.json() == {"user_id": "u1", "tier": "free", "allowed": True, "remaining": 3}
+    body = response.json()
+    assert body["tier"] == "free"
+    assert body["remaining"] == 3
+    assert body["limits"] == {
+        "daily_analyses": 3, "max_pages_per_pdf": 2,
+        "max_text_chars": 10000, "priority_processing": False,
+    }
+
+
+def test_tier_limits_come_from_the_database(client, stub_pipeline, monkeypatch):
+    """Size caps must be read from tier_limits, not a hardcoded dict."""
+    monkeypatch.setattr(
+        analysis_service, "get_tier_limits",
+        lambda tier="free": {
+            "tier": "free", "daily_analyses": 3, "max_pages_per_pdf": 99,
+            "max_text_chars": 50, "priority_processing": False,
+        },
+    )
+    response = client.post("/api/v1/analyze", json={"text": "x" * 51})
+
+    assert response.status_code == 413
+    assert "50" in response.json()["detail"]
+    assert stub_pipeline["increment"] == [], "rejected request must not consume quota"
+
+
+def test_unlimited_tier_skips_size_caps(client, stub_pipeline, monkeypatch):
+    monkeypatch.setattr(
+        analysis_service, "get_tier_limits",
+        lambda tier="free": {
+            "tier": "business", "daily_analyses": -1, "max_pages_per_pdf": -1,
+            "max_text_chars": -1, "priority_processing": True,
+        },
+    )
+    response = client.post("/api/v1/analyze", json={"text": "x" * 100000})
+    assert response.status_code == 200
+
+
+def test_no_hardcoded_tier_dict_in_backend():
+    from pathlib import Path
+
+    for path in Path(__file__).resolve().parents[1].joinpath("backend").rglob("*.py"):
+        assert "TIER_LIMITS" not in path.read_text(encoding="utf-8"), (
+            f"{path.name}: tier limits must be read from the tier_limits table"
+        )
 
 
 def test_backend_never_imports_streamlit():

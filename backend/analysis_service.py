@@ -15,11 +15,13 @@ from typing import Any, Optional
 from analyzer import AnalysisError, AnalysisResult, ClauseAnalyzer, FlaggedClause
 from backend.config import get_settings
 from db_utils import (
+    UNLIMITED,
     cache_analysis,
     check_rate_limit,
     get_cached_analysis,
     get_contract_hash,
     get_or_create_user,
+    get_tier_limits,
     increment_usage,
     log_analysis,
     track_redlined_clause,
@@ -39,6 +41,10 @@ class QuotaExceeded(Exception):
 
 class EngineUnavailable(Exception):
     """Raised when every LLM provider failed (bad key, outage, rate limit)."""
+
+
+class ContractTooLarge(Exception):
+    """Raised when the contract exceeds the caller's tier size limits."""
 
 
 def resolve_jurisdiction(value: Optional[str]) -> Jurisdiction:
@@ -119,9 +125,24 @@ def run_analysis(
         raise ValueError("Contract text cannot be empty.")
 
     get_or_create_user(user_id)
-    allowed, _remaining, _tier = check_rate_limit(user_id, "analysis")
+    allowed, _remaining, tier = check_rate_limit(user_id, "analysis")
     if not allowed:
         raise QuotaExceeded("Daily analysis limit reached for your current tier.")
+
+    # Size caps come from the tier_limits table — never a hardcoded dict.
+    limits = get_tier_limits(tier)
+    max_chars = limits["max_text_chars"]
+    max_pages = limits["max_pages_per_pdf"]
+    page_count = estimate_page_count(text)
+
+    if max_chars != UNLIMITED and len(text) > max_chars:
+        raise ContractTooLarge(
+            f"Contract is {len(text):,} characters; the {tier} tier allows {max_chars:,}."
+        )
+    if max_pages != UNLIMITED and page_count > max_pages:
+        raise ContractTooLarge(
+            f"Contract is ~{page_count} pages; the {tier} tier allows {max_pages}."
+        )
 
     resolved = resolve_jurisdiction(jurisdiction)
     contract_hash = get_contract_hash(f"{resolved.value}::{text}")
@@ -154,8 +175,6 @@ def run_analysis(
             result_to_payload(result),
             result.engine_used,
         )
-
-    page_count = estimate_page_count(text)
 
     # FIX 5: quota decrements on cache hits too.
     increment_usage(user_id, "analysis", pages=page_count, text_chars=len(text))

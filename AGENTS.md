@@ -32,8 +32,11 @@ docker compose -f docker-compose.base44.yml up -d --build
 - `check_daily_limit()` in `schema.sql` previously returned NULLs for any user with no
   usage row today (blocking every first request) because `SELECT ... INTO` leaves the
   variable NULL when no row matches. The COALESCE must wrap the whole subquery.
-- Two stale `TIER_LIMITS` python dicts are quarantined with warnings; `tier_limits` in
-  Postgres is the source of truth.
+- **Tier limits live ONLY in the `tier_limits` table.** Read them with
+  `db_utils.get_tier_limits(tier)`; `-1` (`db_utils.UNLIMITED`) means unlimited. The API
+  enforces `max_text_chars` / `max_pages_per_pdf` and returns **413** on breach, before any
+  quota is spent. A test fails the build if `TIER_LIMITS` reappears under `backend/`. The two
+  stale dicts left in `main.py` / `rate_limiter.py` belong to the legacy Streamlit path only.
 - `telemetry.py` is broken-since-creation — do not import it.
 
 ## Tests

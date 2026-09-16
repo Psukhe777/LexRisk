@@ -5,16 +5,22 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from analyzer import AnalysisError
-from backend.analysis_service import EngineUnavailable, QuotaExceeded, run_analysis
+from backend.analysis_service import (
+    ContractTooLarge,
+    EngineUnavailable,
+    QuotaExceeded,
+    run_analysis,
+)
 from backend.deps import current_user_id
 from backend.schemas import (
     AnalysisMeta,
     AnalyzeRequest,
     AnalyzeResponse,
     FlaggedClauseOut,
+    TierLimits,
     UsageResponse,
 )
-from db_utils import check_rate_limit
+from db_utils import check_rate_limit, get_tier_limits
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +41,8 @@ def analyze(
         )
     except QuotaExceeded as exc:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
+    except ContractTooLarge as exc:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     except EngineUnavailable:
@@ -69,4 +77,11 @@ def analyze(
 @router.get("/usage", response_model=UsageResponse)
 def usage(user_id: str = Depends(current_user_id)) -> UsageResponse:
     allowed, remaining, tier = check_rate_limit(user_id, "analysis")
-    return UsageResponse(user_id=user_id, tier=tier, allowed=allowed, remaining=remaining)
+    limits = get_tier_limits(tier)
+    return UsageResponse(
+        user_id=user_id,
+        tier=tier,
+        allowed=allowed,
+        remaining=remaining,
+        limits=TierLimits(**{k: v for k, v in limits.items() if k != "tier"}),
+    )
