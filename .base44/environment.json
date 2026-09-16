@@ -1,0 +1,17 @@
+{
+  "previewPort": 3000,
+  "healthPath": "/api/v1/health",
+  "startCommand": "docker compose -f docker-compose.base44.yml up -d",
+  "secrets": [
+    {
+      "name": "GROQ_API_KEY",
+      "description": "Groq API key for the primary analysis engine (https://console.groq.com/keys). A placeholder in .env.base44-defaults lets the API boot; POST /api/v1/analyze returns 503 until a real key is supplied.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "OPENAI_API_KEY",
+      "description": "Optional OpenAI key used as the failover engine (https://platform.openai.com/api-keys).",
+      "requiredAtBoot": false
+    }
+  ]
+}
