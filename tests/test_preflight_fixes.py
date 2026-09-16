@@ -2,70 +2,18 @@
 tests/test_preflight_fixes.py — Regression tests for the Session 0.5 pre-migration fixes.
 
 One test per audit fix. Each test fails against the pre-fix code.
-Heavy third-party deps (streamlit, sentence-transformers, groq/openai SDKs) are
-stubbed so these tests run in a bare CI container.
+Heavy third-party deps are stubbed in tests/conftest.py so these tests run in a
+bare CI container.
 """
 
 import json
 import re
-import sys
 import types
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# DEPENDENCY STUBS
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _stub(name: str, **attrs):
-    if name in sys.modules:
-        return sys.modules[name]
-    mod = types.ModuleType(name)
-    for k, v in attrs.items():
-        setattr(mod, k, v)
-    sys.modules[name] = mod
-    return mod
-
-
-def _install_stubs():
-    _stub("dotenv", load_dotenv=lambda *a, **k: None)
-    _stub("groq", Groq=lambda *a, **k: None)
-    _stub("openai", OpenAI=lambda *a, **k: None)
-
-    class _ST:
-        def __init__(self, *a, **k):
-            pass
-
-        def encode(self, texts, **k):
-            return [[0.0] for _ in texts]
-
-    _stub("sentence_transformers", SentenceTransformer=_ST)
-
-    try:
-        import psycopg2  # noqa: F401
-    except ImportError:
-        pg = _stub("psycopg2", connect=lambda *a, **k: None)
-        pool = _stub("psycopg2.pool", ThreadedConnectionPool=object)
-        extras = _stub("psycopg2.extras", RealDictCursor=object)
-        pg.pool = pool
-        pg.extras = extras
-
-    if "sklearn" not in sys.modules:
-        sklearn = _stub("sklearn")
-        metrics = _stub("sklearn.metrics")
-        pairwise = _stub("sklearn.metrics.pairwise", cosine_similarity=lambda a, b: [])
-        sklearn.metrics = metrics
-        metrics.pairwise = pairwise
-
-
-_install_stubs()
-
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 
 def read_source(filename: str) -> str:
