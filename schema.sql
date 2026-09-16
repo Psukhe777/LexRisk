@@ -162,12 +162,18 @@ BEGIN
         RETURN;
     END IF;
     
-    -- Get current count for today
-    SELECT COALESCE(count, 0) INTO v_current_count
-    FROM usage_limits
-    WHERE user_id = p_user_id 
-        AND limit_type = p_limit_type 
-        AND date = CURRENT_DATE;
+    -- Get current count for today.
+    -- NOTE: SELECT ... INTO leaves the variable NULL when NO row matches, so the
+    -- COALESCE must wrap the whole subquery — not the column. Wrapping the column
+    -- made allowed/remaining NULL for every user with no usage row yet, i.e. every
+    -- first request of the day was silently denied.
+    v_current_count := COALESCE((
+        SELECT count
+        FROM usage_limits
+        WHERE user_id = p_user_id
+            AND limit_type = p_limit_type
+            AND date = CURRENT_DATE
+    ), 0);
     
     -- Return result
     RETURN QUERY SELECT 

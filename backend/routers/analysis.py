@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from analyzer import AnalysisError
-from backend.analysis_service import QuotaExceeded, run_analysis
+from backend.analysis_service import EngineUnavailable, QuotaExceeded, run_analysis
 from backend.deps import current_user_id
 from backend.schemas import (
     AnalysisMeta,
@@ -37,6 +37,11 @@ def analyze(
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except EngineUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Analysis engine unavailable — check that a valid GROQ_API_KEY or OPENAI_API_KEY is configured.",
+        )
     except AnalysisError as exc:
         logger.error(f"LLM returned an unusable response: {exc}")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Analysis engine returned an invalid response.")

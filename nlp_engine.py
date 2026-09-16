@@ -15,9 +15,23 @@ from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from functools import lru_cache
 
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
+
+# Heavy ML stack is OPTIONAL: the clause library, chunking and the pure-Python
+# helpers must import in environments without torch installed (API-only images,
+# CI). Anything that actually needs embeddings raises at construction time.
+try:
+    import numpy as np
+    from sentence_transformers import SentenceTransformer
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    ML_STACK_AVAILABLE = True
+    ML_STACK_IMPORT_ERROR: Optional[str] = None
+except ImportError as _exc:  # pragma: no cover - depends on the install profile
+    np = None
+    SentenceTransformer = None
+    cosine_similarity = None
+    ML_STACK_AVAILABLE = False
+    ML_STACK_IMPORT_ERROR = str(_exc)
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +222,12 @@ class NLPVectorizationEngine:
         self.chunk_size = chunk_size
         self.max_chunks_to_send = max_chunks_to_send
         
+        if not ML_STACK_AVAILABLE:
+            raise RuntimeError(
+                "NLP pre-filter requires sentence-transformers, scikit-learn and numpy "
+                f"({ML_STACK_IMPORT_ERROR}). Install them, or run with ENABLE_NLP_FILTER=false."
+            )
+
         logger.info(f"Initializing NLPVectorizationEngine with model: {model_name}")
         
         try:

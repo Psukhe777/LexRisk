@@ -1,0 +1,63 @@
+# Base44 development stack for LexRisk.
+#   docker compose -f docker-compose.base44.yml up -d --build
+#
+# api runs FROM THE MOUNTED SOURCE with uvicorn --reload, so edits apply live.
+# The interactive API docs are the test surface on port 3000 (/docs).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lexrisk
+      POSTGRES_PASSWORD: lexrisk_dev_password
+      POSTGRES_DB: lexrisk
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lexrisk -d lexrisk"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: lexrisk_dev_password
+    volumes:
+      - ./schema.sql:/schema.sql:ro
+    command: >
+      psql -h db -U lexrisk -d lexrisk -v ON_ERROR_STOP=1 -f /schema.sql
+
+  api:
+    image: python:3.12-slim
+    working_dir: /app
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - ./.env.base44-defaults   # placeholders so the API boots without credentials
+      - /run/base44/app.env      # platform-delivered secrets (always wins)
+    environment:
+      DATABASE_URL: postgresql://lexrisk:lexrisk_dev_password@db:5432/lexrisk
+      ENVIRONMENT: development
+      ENABLE_NLP_FILTER: "false"
+      CORS_ORIGINS: "*"
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    volumes:
+      - .:/app
+      - pip_cache:/root/.cache/pip
+    ports:
+      - "3000:8000"
+    command: >
+      bash -c "pip install -q -r backend/requirements-api.txt &&
+               uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  db_data:
+  pip_cache:

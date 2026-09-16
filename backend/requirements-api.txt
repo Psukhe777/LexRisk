@@ -1,0 +1,11 @@
+# Slim install profile for the REST API container.
+# Deliberately EXCLUDES torch / sentence-transformers (~2GB): the API runs with
+# ENABLE_NLP_FILTER=false in the sandbox. Add the root requirements.txt when you
+# want the NLP pre-filter.
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.6.0
+python-dotenv>=1.0.0
+groq>=0.4.0
+openai>=1.12.0
+psycopg2-binary==2.9.9

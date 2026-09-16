@@ -12,7 +12,7 @@ import logging
 import time
 from typing import Any, Optional
 
-from analyzer import AnalysisResult, ClauseAnalyzer, FlaggedClause
+from analyzer import AnalysisError, AnalysisResult, ClauseAnalyzer, FlaggedClause
 from backend.config import get_settings
 from db_utils import (
     cache_analysis,
@@ -35,6 +35,10 @@ _analyzer: Optional[ClauseAnalyzer] = None
 
 class QuotaExceeded(Exception):
     """Raised when the caller has no daily analyses left."""
+
+
+class EngineUnavailable(Exception):
+    """Raised when every LLM provider failed (bad key, outage, rate limit)."""
 
 
 def resolve_jurisdiction(value: Optional[str]) -> Jurisdiction:
@@ -132,7 +136,13 @@ def run_analysis(
     else:
         analyzer = get_analyzer()
         analyzer.jurisdiction = resolved
-        result = analyzer.analyze(text, force_engine=force_engine)
+        try:
+            result = analyzer.analyze(text, force_engine=force_engine)
+        except (ValueError, AnalysisError):
+            raise
+        except Exception as exc:
+            logger.error(f"All analysis engines failed: {exc}")
+            raise EngineUnavailable(str(exc)) from exc
         cache_hit = False
         processing_time_ms = int((time.perf_counter() - started) * 1000)
 
