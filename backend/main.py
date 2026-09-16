@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from backend.config import get_settings
 from backend.routers import analysis, health
@@ -49,6 +50,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.get("/", include_in_schema=False)
+    def root() -> RedirectResponse:
+        """Send the preview root to the interactive API docs."""
+        return RedirectResponse(url="/docs")
 
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(analysis.router, prefix=settings.api_prefix)
