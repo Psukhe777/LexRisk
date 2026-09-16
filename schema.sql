@@ -4,6 +4,14 @@
 -- ══════════════════════════════════════════════════════════════════════════════
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- 0. SCHEMA_VERSION TABLE - migration gate (do not use `users` as a proxy)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- 1. USERS TABLE - Track user identities (IP or session-based)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
@@ -18,8 +26,8 @@ CREATE TABLE IF NOT EXISTS users (
     is_active BOOLEAN DEFAULT TRUE
 );
 
-CREATE INDEX idx_users_tier ON users(tier);
-CREATE INDEX idx_users_last_seen ON users(last_seen);
+CREATE INDEX IF NOT EXISTS idx_users_tier ON users(tier);
+CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. USAGE_LIMITS TABLE - Track daily usage per user
@@ -34,8 +42,8 @@ CREATE TABLE IF NOT EXISTS usage_limits (
     UNIQUE(user_id, limit_type, date)
 );
 
-CREATE INDEX idx_usage_limits_user_date ON usage_limits(user_id, date);
-CREATE INDEX idx_usage_limits_type ON usage_limits(limit_type);
+CREATE INDEX IF NOT EXISTS idx_usage_limits_user_date ON usage_limits(user_id, date);
+CREATE INDEX IF NOT EXISTS idx_usage_limits_type ON usage_limits(limit_type);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3. ANALYSIS_CACHE TABLE - Cache analysis results for identical contracts
@@ -53,8 +61,8 @@ CREATE TABLE IF NOT EXISTS analysis_cache (
     last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_cache_hash ON analysis_cache(contract_hash);
-CREATE INDEX idx_cache_created ON analysis_cache(created_at);
+CREATE INDEX IF NOT EXISTS idx_cache_hash ON analysis_cache(contract_hash);
+CREATE INDEX IF NOT EXISTS idx_cache_created ON analysis_cache(created_at);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 4. ANALYSIS_HISTORY TABLE - Track all analysis requests
@@ -69,13 +77,14 @@ CREATE TABLE IF NOT EXISTS analysis_history (
     risk_level VARCHAR(20),
     engine_used VARCHAR(20),
     was_cached BOOLEAN DEFAULT FALSE,
+    cache_hit BOOLEAN DEFAULT FALSE,  -- billing analytics only; quota ALWAYS decrements
     processing_time_ms INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_history_user ON analysis_history(user_id);
-CREATE INDEX idx_history_created ON analysis_history(created_at);
-CREATE INDEX idx_history_cached ON analysis_history(was_cached);
+CREATE INDEX IF NOT EXISTS idx_history_user ON analysis_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_history_created ON analysis_history(created_at);
+CREATE INDEX IF NOT EXISTS idx_history_cached ON analysis_history(was_cached);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 5. TIER_LIMITS TABLE - Define limits per tier
@@ -111,8 +120,8 @@ CREATE TABLE IF NOT EXISTS redlined_clauses (
     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_redlined_category ON redlined_clauses(clause_category);
-CREATE INDEX idx_redlined_severity ON redlined_clauses(clause_severity);
+CREATE INDEX IF NOT EXISTS idx_redlined_category ON redlined_clauses(clause_category);
+CREATE INDEX IF NOT EXISTS idx_redlined_severity ON redlined_clauses(clause_severity);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 7. HELPER FUNCTIONS

@@ -87,6 +87,9 @@ except ImportError:
 
 MAX_FILE_SIZE_MB = 25
 
+# CONFLICT: These values are wrong (50 pages vs 2 in DB).
+# DO NOT USE after FastAPI migration. Single source of truth: tier_limits table.
+# See audit finding 5.3.
 TIER_LIMITS = {
     "free": {
         "name": "Free",
@@ -1056,13 +1059,15 @@ if analyze_clicked:
                 or estimate_manual_page_count(st.session_state.contract_text)
             )
 
-            if not was_cached:
-                increment_usage(
-                    current_user_id,
-                    "analysis",
-                    pages=page_count,
-                    text_chars=len(st.session_state.contract_text),
-                )
+            # FIX 5: quota ALWAYS decrements, cache hit or not. Serving a cached
+            # result for free let a user replay the same contract indefinitely.
+            # The cache ratio is tracked via analysis_history.cache_hit instead.
+            increment_usage(
+                current_user_id,
+                "analysis",
+                pages=page_count,
+                text_chars=len(st.session_state.contract_text),
+            )
 
             log_analysis(
                 current_user_id,

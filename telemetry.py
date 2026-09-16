@@ -1,3 +1,7 @@
+# BROKEN SINCE CREATION: SQLite schema uses MySQL INDEX syntax inside CREATE TABLE.
+# init_telemetry_db() silently fails. No telemetry has ever been recorded.
+# Do not use this module. Rewrite against PostgreSQL in Session 0.6.
+# See audit finding 5.1.
 """
 telemetry.py — Advanced Data Science Telemetry System
 Silently logs all analysis metadata to SQLite for future model training.

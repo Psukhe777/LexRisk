@@ -111,6 +111,13 @@ Analyze the contract and return the JSON."""
 # DATA CLASSES
 # ══════════════════════════════════════════════════════════════════════════════
 
+MAX_LLM_CHARS = 30000
+
+
+class AnalysisError(Exception):
+    """Raised when the LLM response cannot be used to produce an AnalysisResult."""
+
+
 @dataclass
 class FlaggedClause:
     clause_text: str
@@ -138,6 +145,9 @@ class AnalysisResult:
     # PHASE 3 ADDITION: Jurisdictional context
     jurisdiction: Optional[Jurisdiction] = None
     jurisdictional_score_adjustment: int = 0
+    # Truncation transparency: the LLM only ever sees MAX_LLM_CHARS characters
+    text_truncated: bool = False
+    truncated_at_chars: Optional[int] = None
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CONTRACT TYPE DETECTOR
@@ -268,17 +278,10 @@ class ClauseAnalyzer:
             self.nlp_engine = None
             logger.info("NLP pre-filtering disabled")
         
-        # Fetch keys from Streamlit secrets or environment
-        try:
-            import streamlit as st
-            st_groq = st.secrets.get("GROQ_API_KEY")
-            st_openai = st.secrets.get("OPENAI_API_KEY")
-        except:
-            st_groq = None
-            st_openai = None
-            
-        self.groq_key = groq_key or (api_key if self.provider in ["groq", "auto"] else None) or st_groq or os.getenv("GROQ_API_KEY")
-        self.openai_key = openai_key or (api_key if self.provider in ["openai", "auto"] else None) or st_openai or os.getenv("OPENAI_API_KEY")
+        # API keys come from arguments or environment variables ONLY.
+        # (Streamlit secrets coupling removed — the analyzer must stay UI-agnostic.)
+        self.groq_key = groq_key or (api_key if self.provider in ["groq", "auto"] else None) or os.getenv("GROQ_API_KEY")
+        self.openai_key = openai_key or (api_key if self.provider in ["openai", "auto"] else None) or os.getenv("OPENAI_API_KEY")
         
         # Initialize Groq
         if self.groq_key:
@@ -417,6 +420,9 @@ class ClauseAnalyzer:
                         raise e
                 
             result = self._parse_and_enforce_matrix(raw_json, contract_info['type'])
+            _, was_truncated, truncated_at = self.truncate_for_llm(filtered_text)
+            result.text_truncated = was_truncated
+            result.truncated_at_chars = truncated_at
             result.engine_used = chosen_engine
             result.contract_type = contract_info['type']
             
@@ -437,6 +443,17 @@ class ClauseAnalyzer:
             logger.error(f"API error ({chosen_engine}): {e}")
             raise
 
+    @staticmethod
+    def truncate_for_llm(contract_text: str) -> tuple[str, bool, Optional[int]]:
+        """Truncate text to the LLM window, reporting whether truncation fired."""
+        if len(contract_text) > MAX_LLM_CHARS:
+            logger.warning(
+                f"⚠️ Contract text truncated for LLM: {len(contract_text):,} → {MAX_LLM_CHARS:,} chars. "
+                "Analysis does not cover the discarded tail."
+            )
+            return contract_text[:MAX_LLM_CHARS], True, MAX_LLM_CHARS
+        return contract_text, False, None
+
     def _call_groq(self, contract_text: str, nlp_filtered: bool = False) -> str:
         """Call Groq API with chunk-aware prompt if NLP filtered + jurisdictional context"""
         system_prompt = SYSTEM_PROMPT
@@ -455,7 +472,7 @@ class ClauseAnalyzer:
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": USER_PROMPT_TEMPLATE.format(
-                    contract_text=contract_text[:30000]
+                    contract_text=self.truncate_for_llm(contract_text)[0]
                 )}
             ],
             temperature=0.1,
@@ -481,7 +498,7 @@ class ClauseAnalyzer:
             messages=[
                 {"role": "system", "content": enhanced_prompt},
                 {"role": "user", "content": USER_PROMPT_TEMPLATE.format(
-                    contract_text=contract_text[:30000]
+                    contract_text=self.truncate_for_llm(contract_text)[0]
                 )}
             ],
             temperature=0.1,
@@ -492,7 +509,10 @@ class ClauseAnalyzer:
     def _parse_and_enforce_matrix(self, raw: str, contract_type: str) -> AnalysisResult:
         """Parse LLM response and apply deterministic scoring + jurisdictional adjustments"""
         clean = re.sub(r"```(?:json)?|```", "", raw).strip()
-        data = json.loads(clean)
+        try:
+            data = json.loads(clean)
+        except (json.JSONDecodeError, ValueError) as e:
+            raise AnalysisError(f"LLM returned unparseable JSON: {e}. Raw: {raw[:500]}")
 
         base_score = int(data.get("score", 0))
         flagged_clauses_data = data.get("flags", [])

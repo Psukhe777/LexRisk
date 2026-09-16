@@ -77,31 +77,91 @@ def get_db_connection():
         if conn:
             _connection_pool.putconn(conn)
 
+REQUIRED_TABLES = (
+    'schema_version',
+    'users',
+    'usage_limits',
+    'analysis_cache',
+    'analysis_history',
+    'tier_limits',
+    'redlined_clauses',
+)
+
+SCHEMA_VERSION = 3
+
+# Post-schema migrations, applied every startup. All statements must be idempotent.
+MIGRATIONS = [
+    # FIX 3: redlined_clauses had no unique constraint, so ON CONFLICT DO NOTHING
+    # never fired and every analysis inserted duplicate rows.
+    """
+    ALTER TABLE redlined_clauses
+        ADD COLUMN IF NOT EXISTS contract_hash TEXT,
+        ADD COLUMN IF NOT EXISTS clause_category TEXT;
+    """,
+    """
+    ALTER TABLE redlined_clauses ADD COLUMN IF NOT EXISTS clause_text_hash TEXT
+        GENERATED ALWAYS AS (encode(sha256(clause_text::bytea), 'hex')) STORED;
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_redlined_clause
+        ON redlined_clauses (contract_hash, clause_category, clause_text_hash)
+        WHERE clause_text_hash IS NOT NULL;
+    """,
+    # FIX 5: track cache hits explicitly; quota always decrements.
+    "ALTER TABLE analysis_history ADD COLUMN IF NOT EXISTS cache_hit BOOLEAN DEFAULT FALSE;",
+]
+
+
+def _missing_tables(cur) -> list:
+    """Return the required tables that are absent (never use one table as a proxy)."""
+    cur.execute(
+        """
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = current_schema() AND table_name = ANY(%s);
+        """,
+        (list(REQUIRED_TABLES),),
+    )
+    present = {row[0] for row in cur.fetchall()}
+    return [t for t in REQUIRED_TABLES if t not in present]
+
+
 def _ensure_schema_exists():
-    """Create tables if they don't exist"""
+    """Create/patch tables. Gated on schema_version, verified table by table."""
     with get_db_connection() as conn:
         if conn is None:
             return
-        
+
         with conn.cursor() as cur:
-            # Check if users table exists
-            cur.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'users'
-                );
-            """)
-            
-            if not cur.fetchone()[0]:
-                logger.info("Creating database schema...")
+            missing = _missing_tables(cur)
+
+            if missing:
+                logger.info(f"Applying schema.sql (missing tables: {', '.join(missing)})")
                 schema_path = os.path.join(os.path.dirname(__file__), 'schema.sql')
-                
+
                 if os.path.exists(schema_path):
                     with open(schema_path, 'r') as f:
                         cur.execute(f.read())
-                    logger.info("✅ Schema created successfully")
+                    logger.info("✅ Schema applied successfully")
                 else:
                     logger.warning("schema.sql not found - run manual migration")
+                    return
+
+                still_missing = _missing_tables(cur)
+                if still_missing:
+                    raise RuntimeError(
+                        f"Schema incomplete after migration: {', '.join(still_missing)}"
+                    )
+
+            for statement in MIGRATIONS:
+                cur.execute(statement)
+
+            cur.execute(
+                """
+                INSERT INTO schema_version (version) VALUES (%s)
+                ON CONFLICT (version) DO NOTHING;
+                """,
+                (SCHEMA_VERSION,),
+            )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # USER MANAGEMENT
@@ -303,10 +363,10 @@ def log_analysis(
             cur.execute("""
                 INSERT INTO analysis_history 
                 (user_id, contract_hash, contract_length, page_count, risk_score, 
-                 risk_level, engine_used, was_cached, processing_time_ms)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+                 risk_level, engine_used, was_cached, cache_hit, processing_time_ms)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
             """, (user_id, contract_hash, contract_length, page_count, risk_score,
-                  risk_level, engine_used, was_cached, processing_time_ms))
+                  risk_level, engine_used, was_cached, was_cached, processing_time_ms))
             
             return True
 
@@ -326,7 +386,12 @@ def track_redlined_clause(
                 INSERT INTO redlined_clauses 
                 (clause_category, clause_severity, clause_text, contract_hash)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT DO NOTHING;
+                -- uq_redlined_clause is a PARTIAL unique index, so Postgres requires
+                -- index inference here; "ON CONSTRAINT uq_redlined_clause" is rejected.
+                ON CONFLICT (contract_hash, clause_category, clause_text_hash)
+                WHERE clause_text_hash IS NOT NULL DO UPDATE
+                SET detection_count = redlined_clauses.detection_count + 1,
+                    last_seen = CURRENT_TIMESTAMP;
             """, (clause_category, clause_severity, clause_text, contract_hash))
             
             return True

@@ -337,9 +337,11 @@ class NLPVectorizationEngine:
                     ))
         
         # Step 5: Sort by similarity score (highest risk first) and cap at max_chunks
+        # The LLM must receive text in DOCUMENT ORDER so it can reason about
+        # cross-references and clause precedence: rank by similarity, cap, then re-order.
         if chunk_matches:
-            chunk_matches.sort(key=lambda x: x.similarity_score, reverse=True)
-            chunk_matches = chunk_matches[:self.max_chunks_to_send]
+            top_chunks = sorted(chunk_matches, key=lambda x: x.similarity_score, reverse=True)[:self.max_chunks_to_send]
+            chunk_matches = sorted(top_chunks, key=lambda x: x.chunk_index)
             matched_chunks = [m.chunk_text for m in chunk_matches]
         
         # Calculate metrics
@@ -356,9 +358,11 @@ class NLPVectorizationEngine:
         # Fallback: If no matches found, return first N chunks to avoid silent failures
         if not matched_chunks:
             logger.warning(
-                "No chunks matched threshold - sending first 10 chunks as fallback"
+                "No chunks matched threshold - sending 10 chunks from the document middle as fallback"
             )
-            matched_chunks = chunks[:10]
+            # chunks[:10] is title-page boilerplate; the middle carries substantive terms.
+            mid = len(chunks) // 2
+            matched_chunks = chunks[max(0, mid - 5):mid + 5]
         
         return NLPFilterResult(
             high_risk_chunks=matched_chunks,

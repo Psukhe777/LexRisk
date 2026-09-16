@@ -43,6 +43,9 @@ file_lock = threading.Lock()
 # TIER CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
  
+# CONFLICT: These values are wrong (50 pages vs 2 in DB).
+# DO NOT USE after FastAPI migration. Single source of truth: tier_limits table.
+# See audit finding 5.3.
 TIER_LIMITS = {
     'free': {
         'daily_analyses': 3,
